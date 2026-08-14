@@ -18,4 +18,6 @@ async fn reports_zero_boundaries_for_an_idle_session() {
     assert_eq!(report.final_state(), SessionState::Closed);
     assert_eq!(report.inbound_frames(), 0);
     assert_eq!(report.outbound_frames(), 0);
+    assert_eq!(report.buffer_usage().peak_inbound_bytes(), 0);
+    assert_eq!(report.buffer_usage().peak_outbound_bytes(), 0);
 }

@@ -7,7 +7,7 @@
 //! This module owns result contracts only. It does not perform I/O, transition
 //! lifecycle state, classify retryability, log failures, or expose payload bytes.
 
-use crate::SessionState;
+use crate::{BufferLimitError, BufferUsage, SessionState};
 use std::io;
 use thiserror::Error;
 
@@ -17,6 +17,7 @@ pub struct SessionReport {
     final_state: SessionState,
     inbound_frames: u64,
     outbound_frames: u64,
+    buffer_usage: BufferUsage,
 }
 
 impl SessionReport {
@@ -29,11 +30,13 @@ impl SessionReport {
         final_state: SessionState,
         inbound_frames: u64,
         outbound_frames: u64,
+        buffer_usage: BufferUsage,
     ) -> Self {
         Self {
             final_state,
             inbound_frames,
             outbound_frames,
+            buffer_usage,
         }
     }
 
@@ -65,6 +68,16 @@ impl SessionReport {
     #[must_use]
     pub const fn outbound_frames(&self) -> u64 {
         self.outbound_frames
+    }
+
+    /// Returns peak logical and allocated buffer measurements.
+    ///
+    /// **Inputs:** Shared report borrow.
+    /// **Outputs:** Copyable final buffer-usage snapshot.
+    /// **Logic:** Preserve the distinction between bounded bytes and retained capacity.
+    #[must_use]
+    pub const fn buffer_usage(&self) -> BufferUsage {
+        self.buffer_usage
     }
 }
 
@@ -134,6 +147,19 @@ impl SessionError {
             operation,
             kind: io::ErrorKind::TimedOut,
             detail: format!("{operation} boundary elapsed"),
+        }
+    }
+
+    /// Builds a stable invalid-data error from one logical buffer limit rejection.
+    ///
+    /// **Inputs:** Stable operation label and copyable limit context.
+    /// **Outputs:** Session failure preserving direction, attempted bytes, and limit.
+    /// **Logic:** Keep buffer enforcement machine-classifiable at the runtime boundary.
+    pub(super) fn buffer(operation: &'static str, failure: BufferLimitError) -> Self {
+        Self {
+            operation,
+            kind: io::ErrorKind::InvalidData,
+            detail: failure.to_string(),
         }
     }
 }

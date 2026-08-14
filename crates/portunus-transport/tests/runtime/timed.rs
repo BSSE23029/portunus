@@ -1,6 +1,7 @@
 use bytes::BytesMut;
 use portunus_transport::{
-    start_timed_session, HeartbeatFactory, Message, PeerCodec, SessionConfig, TimingConfig,
+    start_timed_session, start_timed_session_with_buffers, BufferBudget, HeartbeatFactory, Message,
+    PeerCodec, SessionConfig, TimingConfig,
 };
 use std::{io, time::Duration};
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
@@ -19,6 +20,32 @@ fn adapts_stateful_closures_as_heartbeat_factories() {
 
     assert_eq!(factory.heartbeat(), 1);
     assert_eq!(factory.heartbeat(), 2);
+}
+
+// Inputs: four-byte keepalive against a three-byte timed-session outbound budget.
+// Outputs: terminal outbound-buffer failure exactly when heartbeat becomes due.
+// Logic: prove timed liveness output traverses the same enforced accounting boundary.
+#[tokio::test(start_paused = true)]
+async fn enforces_buffer_limits_for_timed_heartbeats() {
+    let (client, _remote) = duplex(64);
+    let timing = TimingConfig::new(Duration::from_secs(1), Duration::from_secs(2)).unwrap();
+    let deadline = tokio::time::Instant::now().into_std() + Duration::from_mins(1);
+    let session = start_timed_session_with_buffers(
+        client,
+        PeerCodec::new(64),
+        SessionConfig::new(1, 1, 1).unwrap(),
+        BufferBudget::new(64, 3).unwrap(),
+        timing,
+        deadline,
+        || Message::KeepAlive,
+    )
+    .unwrap();
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert_eq!(
+        session.join().await.unwrap_err().operation(),
+        "outbound_buffer"
+    );
 }
 
 // Inputs: paused time, idle connection, and peer-wire keepalive factory.

@@ -14,22 +14,25 @@
 //! This module does not connect sockets, select a protocol, correlate requests,
 //! schedule reconnection, install tracing output, or promise transport delivery.
 
-use crate::{LifecycleEvent, SessionConfig, SessionMachine};
+use crate::{BufferAccountant, BufferBudget, LifecycleEvent, SessionConfig, SessionMachine};
 use bytes::BytesMut;
 use std::io;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     sync::mpsc,
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
 
+mod buffer;
 mod report;
 mod timed;
 
+use buffer::{close, fail, read_bounded, write_bounded};
 pub use report::{SessionError, SessionReport};
-pub use timed::{start_timed_session, HeartbeatFactory};
+pub use timed::{start_timed_session, start_timed_session_with_buffers, HeartbeatFactory};
+
+const DEFAULT_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// Codec boundary between protocol messages and persistent byte buffers.
 pub trait FrameCodec: Send + 'static {
@@ -150,11 +153,36 @@ where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C: FrameCodec,
 {
+    start_session_with_buffers(io, codec, config, default_buffer_budget())
+}
+
+/// Spawns one bounded framed runtime with explicit logical buffer ceilings.
+///
+/// **Inputs:** Owned async stream/codec, queue configuration, and buffer budget.
+/// **Outputs:** Application handle owning bounded channels, cancellation, and join.
+/// **Logic:** Allocate configured queues and give one task the codec, I/O, and accountant.
+pub fn start_session_with_buffers<T, C>(
+    io: T,
+    codec: C,
+    config: SessionConfig,
+    buffer_budget: BufferBudget,
+) -> Session<C::Inbound, C::Outbound>
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    C: FrameCodec,
+{
     let (inbound_tx, inbound) = mpsc::channel(config.inbound_capacity());
     let (outbound, outbound_rx) = mpsc::channel(config.outbound_capacity());
     let cancellation = CancellationToken::new();
     let task_cancellation = cancellation.clone();
-    let task = tokio::spawn(run(io, codec, inbound_tx, outbound_rx, task_cancellation));
+    let task = tokio::spawn(run(
+        io,
+        codec,
+        BufferAccountant::new(buffer_budget),
+        inbound_tx,
+        outbound_rx,
+        task_cancellation,
+    ));
     Session {
         inbound,
         outbound,
@@ -172,6 +200,7 @@ where
 async fn run<T, C>(
     mut io: T,
     mut codec: C,
+    mut accountant: BufferAccountant,
     inbound: mpsc::Sender<C::Inbound>,
     mut outbound: mpsc::Receiver<C::Outbound>,
     cancellation: CancellationToken,
@@ -184,7 +213,8 @@ where
     machine
         .apply(LifecycleEvent::Connected)
         .expect("valid start");
-    let mut input = BytesMut::with_capacity(8 * 1024);
+    let initial = accountant.budget().max_inbound_bytes().min(8 * 1024);
+    let mut input = BytesMut::with_capacity(initial);
     let mut output = BytesMut::new();
     let mut inbound_frames = 0_u64;
     let mut outbound_frames = 0_u64;
@@ -194,7 +224,7 @@ where
             Ok(Some(frame)) => {
                 tokio::select! {
                     result = inbound.send(frame) => {
-                        if result.is_err() { return close(io, machine, inbound_frames, outbound_frames).await; }
+                        if result.is_err() { return close(io, machine, inbound_frames, outbound_frames, accountant).await; }
                         inbound_frames += 1;
                     }
                     () = cancellation.cancelled() => break,
@@ -207,17 +237,16 @@ where
 
         tokio::select! {
             () = cancellation.cancelled() => break,
-            read = io.read_buf(&mut input) => {
-                match read.map_err(|failure| fail("read", &failure))? {
-                    0 => return close(io, machine, inbound_frames, outbound_frames).await,
-                    bytes => trace!(bytes, "session transport read"),
+            read = read_bounded(&mut io, &mut input, &mut accountant) => {
+                if read? == 0 {
+                    return close(io, machine, inbound_frames, outbound_frames, accountant).await;
                 }
             }
             item = outbound.recv() => {
                 let Some(item) = item else {
-                    return close(io, machine, inbound_frames, outbound_frames).await;
+                    return close(io, machine, inbound_frames, outbound_frames, accountant).await;
                 };
-                write_frame(&mut io, &mut codec, item, &mut output).await?;
+                write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
                 outbound_frames += 1;
             }
         }
@@ -228,71 +257,17 @@ where
         .expect("active session");
     outbound.close();
     while let Some(item) = outbound.recv().await {
-        write_frame(&mut io, &mut codec, item, &mut output).await?;
+        write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
         outbound_frames += 1;
     }
-    close(io, machine, inbound_frames, outbound_frames).await
+    close(io, machine, inbound_frames, outbound_frames, accountant).await
 }
 
-/// Encodes and completely writes one admitted outbound frame.
+/// Returns the compatibility default one-mebibyte limits for both directions.
 ///
-/// **Inputs:** Exclusive stream/codec/buffer borrows and one owned message.
-/// **Outputs:** Empty reusable buffer on success or operation-labelled failure.
-/// **Logic:** Clear retained capacity, encode once, write all bytes, then count upstream.
-async fn write_frame<T, C>(
-    io: &mut T,
-    codec: &mut C,
-    item: C::Outbound,
-    output: &mut BytesMut,
-) -> Result<(), SessionError>
-where
-    T: AsyncWrite + Unpin,
-    C: FrameCodec,
-{
-    output.clear();
-    codec
-        .encode_frame(item, output)
-        .map_err(|failure| fail("encode", &failure))?;
-    io.write_all(output)
-        .await
-        .map_err(|failure| fail("write", &failure))?;
-    trace!(bytes = output.len(), "session transport wrote frame");
-    Ok(())
-}
-
-/// Shuts down transport output and returns a terminal lifecycle report.
-///
-/// **Inputs:** Owned stream/machine and accumulated delivered frame counters.
-/// **Outputs:** Closed report or shutdown write error.
-/// **Logic:** Normalize active/connecting state through closure, invoke graceful
-/// writer shutdown, and publish bounded terminal telemetry.
-async fn close<T: AsyncWrite + Unpin>(
-    mut io: T,
-    mut machine: SessionMachine,
-    inbound_frames: u64,
-    outbound_frames: u64,
-) -> Result<SessionReport, SessionError> {
-    machine
-        .apply(LifecycleEvent::TransportClosed)
-        .expect("transport close is valid");
-    io.shutdown()
-        .await
-        .map_err(|failure| fail("write", &failure))?;
-    debug!(inbound_frames, outbound_frames, "session closed");
-    Ok(SessionReport::new(
-        machine.state(),
-        inbound_frames,
-        outbound_frames,
-    ))
-}
-
-/// Converts and logs one terminal I/O-compatible operation failure.
-///
-/// **Inputs:** Stable operation label and owned source error.
-/// **Outputs:** Normalized session error.
-/// **Logic:** Emit only bounded category/detail fields; never payload buffers.
-fn fail(operation: &'static str, source: &io::Error) -> SessionError {
-    let failure = SessionError::io(operation, source);
-    error!(operation, kind = ?failure.kind(), "session operation failed");
-    failure
+/// **Inputs:** No environmental state.
+/// **Outputs:** Validated default logical buffer budget.
+/// **Logic:** Keep legacy constructor bounded while explicit constructors remain tunable.
+fn default_buffer_budget() -> BufferBudget {
+    BufferBudget::new(DEFAULT_BUFFER_BYTES, DEFAULT_BUFFER_BYTES).expect("positive defaults")
 }

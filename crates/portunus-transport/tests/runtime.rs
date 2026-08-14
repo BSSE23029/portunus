@@ -5,6 +5,8 @@ use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::codec::Encoder;
 
+#[path = "runtime/buffer.rs"]
+mod buffer;
 #[path = "runtime/report.rs"]
 mod report;
 #[path = "runtime/timed.rs"]

@@ -222,6 +222,16 @@ impl BufferAccountant {
     pub const fn usage(&self) -> BufferUsage {
         self.usage
     }
+
+    /// Returns the immutable budget enforced by this accountant.
+    ///
+    /// **Inputs:** Shared accountant borrow.
+    /// **Outputs:** Copy of both independent logical byte ceilings.
+    /// **Logic:** Allow runtime I/O to calculate remaining admission before reading.
+    #[must_use]
+    pub const fn budget(&self) -> BufferBudget {
+        self.budget
+    }
 }
 
 /// Validates one observation and updates its logical/allocation peaks.

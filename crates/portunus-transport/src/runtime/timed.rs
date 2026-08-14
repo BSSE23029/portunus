@@ -8,15 +8,18 @@
 //! cancellation. This module does not reconnect, correlate messages, or select a
 //! protocol heartbeat representation; the caller supplies [`HeartbeatFactory`].
 
-use super::{close, fail, write_frame, FrameCodec, Session, SessionError, SessionReport};
+use super::{
+    buffer::{close, fail, read_bounded, write_bounded},
+    default_buffer_budget, FrameCodec, Session, SessionError, SessionReport,
+};
 use crate::{
-    ConnectionTimer, LifecycleEvent, SessionConfig, SessionMachine, TimingAction, TimingConfig,
-    TimingConfigError,
+    BufferAccountant, BufferBudget, ConnectionTimer, LifecycleEvent, SessionConfig, SessionMachine,
+    TimingAction, TimingConfig, TimingConfigError,
 };
 use bytes::BytesMut;
 use std::time::Instant;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncWrite},
     sync::mpsc,
 };
 use tokio_util::sync::CancellationToken;
@@ -67,6 +70,41 @@ where
     C: FrameCodec,
     H: HeartbeatFactory<C::Outbound>,
 {
+    start_timed_session_with_buffers(
+        io,
+        codec,
+        config,
+        default_buffer_budget(),
+        timing,
+        deadline,
+        heartbeat,
+    )
+}
+
+/// Spawns a timed session with explicit independent logical buffer ceilings.
+///
+/// **Inputs:** Owned I/O/codec, queue and buffer policies, timing/deadline, and heartbeat.
+/// **Outputs:** Session handle or synchronous invalid-deadline error.
+/// **Logic:** Validate timing, allocate bounded queues, and move one accountant into
+/// the exclusive session task alongside all mutable connection machinery.
+///
+/// # Errors
+/// Returns [`TimingConfigError::DeadlineElapsed`] unless deadline is strictly future.
+#[allow(clippy::too_many_arguments)]
+pub fn start_timed_session_with_buffers<T, C, H>(
+    io: T,
+    codec: C,
+    config: SessionConfig,
+    buffer_budget: BufferBudget,
+    timing: TimingConfig,
+    deadline: Instant,
+    heartbeat: H,
+) -> Result<Session<C::Inbound, C::Outbound>, TimingConfigError>
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    C: FrameCodec,
+    H: HeartbeatFactory<C::Outbound>,
+{
     let timer = ConnectionTimer::new(timing, tokio::time::Instant::now().into_std(), deadline)?;
     let (inbound_tx, inbound) = mpsc::channel(config.inbound_capacity());
     let (outbound, outbound_rx) = mpsc::channel(config.outbound_capacity());
@@ -77,6 +115,7 @@ where
         codec,
         heartbeat,
         timer,
+        BufferAccountant::new(buffer_budget),
         inbound_tx,
         outbound_rx,
         task_cancellation,
@@ -101,6 +140,7 @@ async fn run<T, C, H>(
     mut codec: C,
     mut heartbeat: H,
     mut timer: ConnectionTimer,
+    mut accountant: BufferAccountant,
     inbound: mpsc::Sender<C::Inbound>,
     mut outbound: mpsc::Receiver<C::Outbound>,
     cancellation: CancellationToken,
@@ -114,7 +154,8 @@ where
     machine
         .apply(LifecycleEvent::Connected)
         .expect("valid start");
-    let mut input = BytesMut::with_capacity(8 * 1024);
+    let initial = accountant.budget().max_inbound_bytes().min(8 * 1024);
+    let mut input = BytesMut::with_capacity(initial);
     let mut output = BytesMut::new();
     let mut inbound_frames = 0_u64;
     let mut outbound_frames = 0_u64;
@@ -125,7 +166,7 @@ where
                 let terminal = tokio::time::Instant::from_std(timer.terminal_wakeup());
                 tokio::select! {
                     result = inbound.send(frame) => {
-                        if result.is_err() { return close(io, machine, inbound_frames, outbound_frames).await; }
+                        if result.is_err() { return close(io, machine, inbound_frames, outbound_frames, accountant).await; }
                         inbound_frames += 1;
                     }
                     () = cancellation.cancelled() => break,
@@ -145,7 +186,7 @@ where
             () = tokio::time::sleep_until(wakeup) => {
                 match timer.evaluate(tokio::time::Instant::now().into_std()) {
                     TimingAction::HeartbeatDue => {
-                        write_frame(&mut io, &mut codec, heartbeat.heartbeat(), &mut output).await?;
+                        write_bounded(&mut io, &mut codec, heartbeat.heartbeat(), &mut output, &mut accountant).await?;
                         outbound_frames += 1;
                         timer.record_outbound(tokio::time::Instant::now().into_std());
                     }
@@ -155,17 +196,17 @@ where
                     TimingAction::Wait => {}
                 }
             }
-            read = io.read_buf(&mut input) => {
-                match read.map_err(|failure| fail("read", &failure))? {
-                    0 => return close(io, machine, inbound_frames, outbound_frames).await,
+            read = read_bounded(&mut io, &mut input, &mut accountant) => {
+                match read? {
+                    0 => return close(io, machine, inbound_frames, outbound_frames, accountant).await,
                     _ => timer.record_inbound(tokio::time::Instant::now().into_std()),
                 }
             }
             item = outbound.recv() => {
                 let Some(item) = item else {
-                    return close(io, machine, inbound_frames, outbound_frames).await;
+                    return close(io, machine, inbound_frames, outbound_frames, accountant).await;
                 };
-                write_frame(&mut io, &mut codec, item, &mut output).await?;
+                write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
                 outbound_frames += 1;
                 timer.record_outbound(tokio::time::Instant::now().into_std());
             }
@@ -177,10 +218,10 @@ where
         .expect("active session");
     outbound.close();
     while let Some(item) = outbound.recv().await {
-        write_frame(&mut io, &mut codec, item, &mut output).await?;
+        write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
         outbound_frames += 1;
     }
-    close(io, machine, inbound_frames, outbound_frames).await
+    close(io, machine, inbound_frames, outbound_frames, accountant).await
 }
 
 /// Maps the timer's current terminal action into a stable timeout failure.

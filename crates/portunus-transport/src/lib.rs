@@ -26,7 +26,8 @@ pub use buffer::{
 pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
 pub use reconnect::{ReconnectConfigError, ReconnectPolicy};
 pub use runtime::{
-    start_session, start_timed_session, FrameCodec, HeartbeatFactory, Session, SessionError,
+    start_session, start_session_with_buffers, start_timed_session,
+    start_timed_session_with_buffers, FrameCodec, HeartbeatFactory, Session, SessionError,
     SessionReport,
 };
 pub use session::{
@@ -85,7 +86,6 @@ impl Handshake {
     /// **Inputs:** `input`, expected to contain exactly one 68-byte handshake.
     /// **Outputs:** A structured [`Handshake`], or `InvalidData` when the size,
     /// protocol-name length, or protocol name is incorrect.
-    ///
     /// **Logic:** Authenticate the framing constants first, then copy the three
     /// fixed-width identity/feature fields into strongly sized arrays.
     ///
