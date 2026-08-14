@@ -23,9 +23,11 @@
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+mod access;
 mod encode;
 mod limits;
 
+pub use access::{PathError, PathSegment, TypeError, ValueKind};
 pub use encode::encode;
 pub use limits::{LimitKind, Limits};
 
