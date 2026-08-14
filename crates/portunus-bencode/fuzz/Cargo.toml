@@ -1,0 +1,22 @@
+[package]
+name = "portunus-bencode-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+authors = ["Muhammad Mukarram Raza"]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+portunus-bencode = { path = ".." }
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

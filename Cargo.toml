@@ -21,7 +21,9 @@ rust-version = "1.85"
 [workspace.dependencies]
 async-stream = "0.3"
 bytes = "1.6"
+criterion = { version = "0.5", default-features = false }
 prost = "0.13"
+proptest = "1"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 sha1 = "0.10"
