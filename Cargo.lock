@@ -783,8 +783,10 @@ name = "portunus-daemon"
 version = "0.1.0"
 dependencies = [
  "async-stream",
+ "bytes",
  "portunus-engine",
  "portunus-proto",
+ "prost",
  "thiserror",
  "tokio",
  "tokio-stream",
