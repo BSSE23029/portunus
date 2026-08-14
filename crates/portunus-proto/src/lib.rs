@@ -11,4 +11,8 @@
     clippy::missing_errors_doc,
     clippy::too_many_lines
 )]
-tonic::include_proto!("portunus");
+pub const API_VERSION: &str = "v1";
+pub const API_PACKAGE: &str = "portunus.v1";
+pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("portunus_descriptor");
+
+tonic::include_proto!("portunus.v1");

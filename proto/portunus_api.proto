@@ -1,5 +1,5 @@
 syntax = "proto3";
-package portunus;
+package portunus.v1;
 
 service PortunusControl {
   // Inputs: a source identifier and destination path.

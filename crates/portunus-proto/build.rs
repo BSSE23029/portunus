@@ -7,9 +7,12 @@
 //   sides of the contract. Generated files are included by the library crate.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../../proto/portunus_api.proto");
+    let descriptor =
+        std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("portunus_descriptor.bin");
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
+        .file_descriptor_set_path(descriptor)
         .compile_protos(&["../../proto/portunus_api.proto"], &["../../proto"])?;
     Ok(())
 }
