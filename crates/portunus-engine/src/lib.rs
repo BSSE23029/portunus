@@ -21,6 +21,7 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
 pub mod budget;
+pub mod policy;
 pub mod runtime;
 
 #[derive(Debug, Clone, Copy)]
