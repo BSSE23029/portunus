@@ -12,12 +12,13 @@
 use portunus_daemon::{
     auth::{AuthConfig, AuthInterceptor},
     logging::{init_global_logging, LoggingConfig},
+    operations::{mark_draining, mark_serving},
 };
 use portunus_engine::torrent::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
     ConfigResponse, ConfigUpdate, Empty, MetricsResponse, StopTransferRequest, TransferRequest,
-    TransferResponse,
+    TransferResponse, FILE_DESCRIPTOR_SET,
 };
 use std::{net::SocketAddr, path::PathBuf, pin::Pin};
 use tokio_stream::Stream;
@@ -151,10 +152,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
     let control = PortunusControlServer::with_interceptor(service, AuthInterceptor::new(auth));
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    mark_serving(&mut health_reporter).await;
+    let reflection = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
+        .build_v1()?;
     Server::builder()
+        .add_service(health_service)
+        .add_service(reflection)
         .add_service(control)
-        .serve_with_shutdown(addr, async {
+        .serve_with_shutdown(addr, async move {
             let _ = tokio::signal::ctrl_c().await;
+            mark_draining(&mut health_reporter).await;
+            tracing::info!("Portunus control plane draining");
         })
         .await?;
     Ok(())

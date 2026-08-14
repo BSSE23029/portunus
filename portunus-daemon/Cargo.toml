@@ -12,6 +12,8 @@ portunus-proto = { version = "0.1.0", path = "../crates/portunus-proto" }
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
+tonic-health.workspace = true
+tonic-reflection.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true

@@ -34,6 +34,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tonic = "0.12"
 tonic-build = "0.12"
+tonic-health = "0.12"
+tonic-reflection = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
