@@ -20,6 +20,7 @@ pub mod assembly;
 pub mod content;
 pub mod integrity;
 pub mod journal;
+pub mod quota;
 
 #[derive(Debug, Error)]
 pub enum Error {
