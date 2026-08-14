@@ -16,10 +16,12 @@ use tokio::{
     sync::Mutex,
 };
 
+pub mod access;
 pub mod assembly;
 pub mod content;
 pub mod integrity;
 pub mod journal;
+pub mod layout;
 pub mod quota;
 
 #[derive(Debug, Error)]
