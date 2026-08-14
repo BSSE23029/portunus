@@ -26,12 +26,14 @@ use thiserror::Error;
 mod access;
 mod deserialize;
 mod encode;
+mod incremental;
 mod limits;
 mod spanned;
 
 pub use access::{PathError, PathSegment, TypeError, ValueKind};
 pub use deserialize::{from_slice, from_value, DeserializeError, DeserializePath};
 pub use encode::encode;
+pub use incremental::{FeedStatus, IncrementalParser};
 pub use limits::{LimitKind, Limits};
 pub use spanned::{parse_spanned, parse_spanned_with_limits, SpannedKind, SpannedValue};
 
