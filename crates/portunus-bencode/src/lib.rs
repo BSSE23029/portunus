@@ -24,10 +24,13 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 mod access;
+mod deserialize;
+mod deserialize_collections;
 mod encode;
 mod limits;
 
 pub use access::{PathError, PathSegment, TypeError, ValueKind};
+pub use deserialize::{from_slice, from_value, DeserializeError, DeserializePath};
 pub use encode::encode;
 pub use limits::{LimitKind, Limits};
 
