@@ -9,7 +9,10 @@
 //!                <──server stream───── Control <──watch────── Engine
 //! ```
 
-use portunus_daemon::logging::{init_global_logging, LoggingConfig};
+use portunus_daemon::{
+    auth::{AuthConfig, AuthInterceptor},
+    logging::{init_global_logging, LoggingConfig},
+};
 use portunus_engine::torrent::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
@@ -128,8 +131,8 @@ impl PortunusControl for Control {
 
 #[tokio::main]
 // Inputs:
-// - `PORTUNUS_ADDR`, `PORTUNUS_LOG`, and `RUST_LOG` environment variables; all
-//   are optional.
+// - Optional `PORTUNUS_ADDR`, `PORTUNUS_LOG`, `RUST_LOG`, and
+//   `PORTUNUS_BEARER_TOKEN` environment variables.
 // Outputs:
 // - A running gRPC server until Ctrl-C, or a boxed startup/runtime error.
 // Logic:
@@ -141,12 +144,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = std::env::var("PORTUNUS_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:50051".into())
         .parse()?;
+    let bearer = std::env::var("PORTUNUS_BEARER_TOKEN").ok();
+    let auth = AuthConfig::from_source(bearer.as_deref())?;
     let service = Control {
         engine: Engine::start(Config::default()),
     };
     tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
+    let control = PortunusControlServer::with_interceptor(service, AuthInterceptor::new(auth));
     Server::builder()
-        .add_service(PortunusControlServer::new(service))
+        .add_service(control)
         .serve_with_shutdown(addr, async {
             let _ = tokio::signal::ctrl_c().await;
         })
