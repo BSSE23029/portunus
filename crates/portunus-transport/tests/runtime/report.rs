@@ -1,4 +1,5 @@
-use portunus_transport::{start_session, PeerCodec, SessionConfig, SessionState};
+use portunus_transport::peer::PeerCodec;
+use portunus_transport::{start_session, SessionConfig, SessionState};
 use tokio::io::duplex;
 
 // Inputs: an idle in-memory session cancelled before any frame handoff.

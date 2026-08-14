@@ -1,4 +1,5 @@
-use portunus_transport::{start_session, PeerCodec, SessionConfig};
+use portunus_transport::peer::PeerCodec;
+use portunus_transport::{start_session, SessionConfig};
 use tokio::io::duplex;
 
 // Inputs: compatibility constructor over an idle in-memory duplex stream.

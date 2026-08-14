@@ -1,8 +1,8 @@
 use bytes::BytesMut;
+use portunus_transport::peer::{Message, PeerCodec};
 use portunus_transport::{
     pool::{BufferPool, BufferPoolConfig},
-    start_session_with_buffers, start_session_with_pool, BufferBudget, Message, PeerCodec,
-    SessionConfig,
+    start_session_with_buffers, start_session_with_pool, BufferBudget, SessionConfig,
 };
 use std::io;
 use tokio::io::{duplex, AsyncWriteExt};

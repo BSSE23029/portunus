@@ -1,4 +1,5 @@
-use portunus_transport::{start_timed_session, Message, PeerCodec, SessionConfig, TimingConfig};
+use portunus_transport::peer::{Message, PeerCodec};
+use portunus_transport::{start_timed_session, SessionConfig, TimingConfig};
 use std::time::Duration;
 use tokio::io::duplex;
 

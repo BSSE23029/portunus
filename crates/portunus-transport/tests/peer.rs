@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use portunus_transport::{Handshake, Message, PeerCodec, HANDSHAKE_LEN};
+use portunus_transport::peer::{Handshake, Message, PeerCodec, HANDSHAKE_LEN};
 use tokio_util::codec::{Decoder, Encoder};
 
 // Inputs: a handshake with recognizable field bytes.
@@ -83,4 +83,18 @@ fn codec_handles_stream_boundaries() {
     assert!(codec
         .decode(&mut BytesMut::from(&[0, 0, 0, 5][..]))
         .is_err());
+}
+
+// Inputs: complete four-byte header declaring a frame whose body has not arrived.
+// Outputs: incomplete decode without codec-driven receive-buffer capacity growth.
+// Logic: generic runtime, not a protocol adapter, must own allocation and byte budgets.
+#[test]
+fn incomplete_peer_frame_does_not_reserve_runtime_memory() {
+    let mut codec = PeerCodec::new(64);
+    let mut source = BytesMut::with_capacity(4);
+    source.extend_from_slice(&[0, 0, 0, 64]);
+    let capacity = source.capacity();
+
+    assert_eq!(codec.decode(&mut source).unwrap(), None);
+    assert_eq!(source.capacity(), capacity);
 }

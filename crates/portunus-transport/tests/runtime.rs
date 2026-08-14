@@ -1,5 +1,6 @@
 use bytes::BytesMut;
-use portunus_transport::{start_session, Message, PeerCodec, SessionConfig, SessionState};
+use portunus_transport::peer::{Message, PeerCodec};
+use portunus_transport::{start_session, SessionConfig, SessionState};
 use std::io;
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
