@@ -1,4 +1,16 @@
-//! Bounded-command swarm orchestrator and rarest-first scheduler.
+//! Bounded-command orchestrator and scheduling primitives.
+//!
+//! The engine uses an **actor**: one task owns mutable transfer state and changes
+//! it only after receiving commands. Callers never lock that transfer map.
+//!
+//! ```text
+//! caller A ─┐                    ┌─ oneshot reply ─> caller A
+//! caller B ─┼─ bounded MPSC ─> actor ──owns──> HashMap<Transfer>
+//! gRPC    ──┘                    └─ watch metrics ─> subscribers
+//! ```
+//!
+//! A bounded queue is deliberate backpressure: when the actor cannot keep up,
+//! producers wait rather than turning overload into unbounded memory growth.
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -16,6 +28,14 @@ pub struct Config {
     pub command_buffer: u32,
 }
 impl Default for Config {
+    // Inputs:
+    // - No parameters; this is the standard default-construction contract.
+    // Outputs:
+    // - A conservative runtime configuration with unlimited byte rates, at most
+    //   200 peers, and space for 128 pending commands.
+    // Logic:
+    // - Centralize operational defaults so every composition root starts from the
+    //   same explicit resource policy.
     fn default() -> Self {
         Self {
             download_limit: 0,
@@ -66,6 +86,15 @@ pub struct Engine {
     metrics: watch::Receiver<Metrics>,
 }
 impl Engine {
+    /// Starts the engine actor and returns its cloneable control handle.
+    ///
+    /// **Inputs:** Initial [`Config`], including the command-queue capacity.
+    ///
+    /// **Outputs:** An [`Engine`] handle containing a bounded command sender,
+    /// shared configuration, and a subscription to the latest metrics snapshot.
+    ///
+    /// **Logic:** Create MPSC and watch channels, spawn the sole transfer-state
+    /// owner, then expose only message-based mutation to callers.
     pub fn start(config: Config) -> Self {
         let (tx, rx) = mpsc::channel(config.command_buffer as usize);
         let (metrics_tx, metrics) = watch::channel(Metrics::default());
@@ -77,6 +106,15 @@ impl Engine {
             metrics,
         }
     }
+    /// Submits a transfer and waits for the actor-assigned identifier.
+    ///
+    /// **Inputs:** A logical `source` string and destination filesystem path.
+    ///
+    /// **Outputs:** A transfer ID, a validation error from the actor, or `Closed`
+    /// when either side of command/reply communication has stopped.
+    ///
+    /// **Logic:** Create a one-use reply channel, send an `Add` command through
+    /// the bounded queue (waiting under backpressure), then await its exact reply.
     pub async fn add_transfer(
         &self,
         source: String,
@@ -93,6 +131,14 @@ impl Engine {
             .map_err(|_| Error::Closed)?;
         reply_rx.await.map_err(|_| Error::Closed)?
     }
+    /// Requests removal of one active transfer.
+    ///
+    /// **Inputs:** The engine-assigned transfer `id`.
+    ///
+    /// **Outputs:** Success, `UnknownTransfer`, or `Closed` if the actor is gone.
+    ///
+    /// **Logic:** Package the ID with a one-shot response sender, serialize the
+    /// mutation through the command queue, and asynchronously await the outcome.
     pub async fn stop_transfer(&self, id: String) -> Result<(), Error> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -101,17 +147,51 @@ impl Engine {
             .map_err(|_| Error::Closed)?;
         rx.await.map_err(|_| Error::Closed)?
     }
+    /// Creates an independent subscription to current and future metrics.
+    ///
+    /// **Inputs:** The engine handle through `self`.
+    ///
+    /// **Outputs:** A cloned watch receiver initialized with the latest snapshot.
+    ///
+    /// **Logic:** Clone only the receiver cursor; all subscribers observe the same
+    /// latest-value channel without copying engine ownership.
     pub fn subscribe_metrics(&self) -> watch::Receiver<Metrics> {
         self.metrics.clone()
     }
+    /// Reads a consistent snapshot of the current runtime configuration.
+    ///
+    /// **Inputs:** The engine handle through `self`.
+    ///
+    /// **Outputs:** An owned [`Config`] snapshot that no longer holds the lock.
+    ///
+    /// **Logic:** Acquire a shared read lock, clone the small configuration, and
+    /// release the guard at the end of the expression.
     pub async fn config(&self) -> Config {
         self.config.read().await.clone()
     }
+    /// Applies an in-process mutation to runtime configuration.
+    ///
+    /// **Inputs:** A one-use closure receiving mutable access to [`Config`].
+    ///
+    /// **Outputs:** Unit after the closure has completed; this API cannot itself
+    /// report validation errors yet.
+    ///
+    /// **Logic:** Take the exclusive configuration lock and run the caller's
+    /// mutation while protected from concurrent readers/writers.
     pub async fn update_config(&self, f: impl FnOnce(&mut Config)) {
         let mut config = self.config.write().await;
         f(&mut config);
     }
 }
+// Inputs:
+// - `rx`: sole receiver for all engine commands.
+// - `metrics_tx`: latest-value publisher for observable engine state.
+// Outputs:
+// - No return value; the task ends naturally when every command sender is gone.
+// Logic:
+// - Own the transfer map and monotonically increasing ID sequence, process one
+//   mutation at a time, answer via each command's one-shot channel, then publish
+//   a fresh active-transfer count. This avoids locks around transfer state.
 async fn run(mut rx: mpsc::Receiver<Command>, metrics_tx: watch::Sender<Metrics>) {
     let mut transfers = HashMap::<String, Transfer>::new();
     let mut sequence = 0u64;
@@ -158,6 +238,16 @@ pub struct Block {
     pub offset: u32,
     pub length: u32,
 }
+/// Selects the least replicated eligible piece.
+///
+/// **Inputs:** Per-piece peer `availability`, plus sets of completed and currently
+/// inflight piece indices.
+///
+/// **Outputs:** The selected piece index, or `None` when nothing is available and
+/// eligible. Equal rarity is resolved by lowest index for deterministic behavior.
+///
+/// **Logic:** Enumerate availability counts, remove unavailable/completed/inflight
+/// candidates, compare by count then index, and return the winning index.
 pub fn rarest_first(
     availability: &[u32],
     complete: &HashSet<u32>,
@@ -179,6 +269,14 @@ pub fn rarest_first(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Inputs:
+    // - Availability counts [4, 1, 2] and no excluded pieces.
+    // Outputs:
+    // - A passing assertion that piece 1 is selected.
+    // Logic:
+    // - Isolate scheduler policy from networking so rarity behavior is completely
+    //   deterministic and inexpensive to test.
     #[test]
     fn chooses_rarest_available() {
         assert_eq!(
@@ -186,6 +284,13 @@ mod tests {
             Some(1)
         );
     }
+    // Inputs:
+    // - Default engine configuration and a nonempty reference source/path.
+    // Outputs:
+    // - A passing assertion for the first actor-generated transfer ID.
+    // Logic:
+    // - Cross the MPSC command boundary and one-shot reply boundary to prove the
+    //   actor is running and owns ID assignment.
     #[tokio::test]
     async fn bounded_actor_accepts_transfer() {
         let e = Engine::start(Config::default());

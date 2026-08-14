@@ -1,3 +1,14 @@
+//! Reference composition root for the Portunus crates.
+//!
+//! The daemon deliberately remains thin: it translates network contracts into
+//! engine calls and translates engine results back into gRPC status/messages.
+//! Business and protocol logic belongs in reusable library crates.
+//!
+//! ```text
+//! grpcurl/client ──HTTP/2 + Protobuf──> Control ──commands──> Engine
+//!                <──server stream───── Control <──watch────── Engine
+//! ```
+
 use portunus_engine::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
@@ -13,6 +24,13 @@ struct Control {
 }
 #[tonic::async_trait]
 impl PortunusControl for Control {
+    // Inputs:
+    // - A gRPC request containing source and destination strings.
+    // Outputs:
+    // - An accepted transfer response, or `InvalidArgument` status.
+    // Logic:
+    // - Remove the protobuf envelope, convert the destination into a path, submit
+    //   through the engine's bounded actor API, and map domain errors to gRPC.
     async fn add_transfer(
         &self,
         request: Request<TransferRequest>,
@@ -29,6 +47,13 @@ impl PortunusControl for Control {
             message: "queued".into(),
         }))
     }
+    // Inputs:
+    // - A gRPC request containing the transfer ID to stop.
+    // Outputs:
+    // - A stopped response, or `NotFound` status for an unknown transfer.
+    // Logic:
+    // - Forward the identifier through the engine command queue and preserve it
+    //   in the success response for easy client-side correlation.
     async fn stop_transfer(
         &self,
         request: Request<StopTransferRequest>,
@@ -46,6 +71,13 @@ impl PortunusControl for Control {
     }
     type StreamMetricsStream =
         Pin<Box<dyn Stream<Item = Result<MetricsResponse, Status>> + Send + 'static>>;
+    // Inputs:
+    // - Empty gRPC request; subscription state comes from the engine handle.
+    // Outputs:
+    // - A server-streaming response yielding metrics until the engine closes.
+    // Logic:
+    // - Read the latest watch value, convert it to protobuf, yield it, then await
+    //   a change. Slow clients naturally keep only the latest watch snapshot.
     async fn stream_metrics(
         &self,
         _: Request<Empty>,
@@ -54,6 +86,13 @@ impl PortunusControl for Control {
         let output = async_stream::try_stream! {loop{let m=rx.borrow_and_update().clone();yield MetricsResponse{download_speed:m.download_speed,upload_speed:m.upload_speed,connected_peers:m.connected_peers,progress:m.progress,active_transfers:m.active_transfers};if rx.changed().await.is_err(){break;}}};
         Ok(Response::new(Box::pin(output)))
     }
+    // Inputs:
+    // - A protobuf patch whose fields are optional.
+    // Outputs:
+    // - The complete effective configuration after applying present values.
+    // Logic:
+    // - Mutate only supplied fields under the engine's config write lock, then
+    //   obtain a fresh snapshot and translate it back to the wire contract.
     async fn update_config(
         &self,
         request: Request<ConfigUpdate>,
@@ -86,6 +125,13 @@ impl PortunusControl for Control {
 }
 
 #[tokio::main]
+// Inputs:
+// - `PORTUNUS_ADDR` and `RUST_LOG` environment variables; both are optional.
+// Outputs:
+// - A running gRPC server until Ctrl-C, or a boxed startup/runtime error.
+// Logic:
+// - Initialize structured logging, parse the listen address, start the bounded
+//   engine, register its gRPC adapter, and drain gracefully on the OS signal.
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

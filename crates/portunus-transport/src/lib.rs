@@ -1,4 +1,14 @@
 //! BitTorrent peer-wire handshake and framed message codec.
+//!
+//! TCP is an ordered byte stream: a single read may contain half a message or
+//! several messages. [`PeerCodec`] preserves incomplete bytes in `BytesMut` and
+//! emits a message only when its full length-prefixed frame is available.
+//!
+//! ```text
+//! ┌──── 4-byte length ────┬─ 1-byte ID ─┬──── payload ────┐
+//! │ 00 00 00 0d           │ 06          │ index/begin/len │
+//! └───────────────────────┴─────────────┴─────────────────┘
+//! ```
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
@@ -14,6 +24,15 @@ pub struct Handshake {
 }
 
 impl Handshake {
+    /// Serializes a structured handshake into its fixed wire representation.
+    ///
+    /// **Inputs:** The handshake's reserved feature bits, content info hash, and
+    /// peer identity through `self`.
+    ///
+    /// **Outputs:** Exactly 68 bytes suitable for writing to a TCP connection.
+    ///
+    /// **Logic:** Place the protocol length/name and each fixed-size field at the
+    /// offsets defined by the peer-wire protocol.
     pub fn encode(&self) -> [u8; HANDSHAKE_LEN] {
         let mut out = [0; HANDSHAKE_LEN];
         out[0] = 19;
@@ -23,6 +42,15 @@ impl Handshake {
         out[48..68].copy_from_slice(&self.peer_id);
         out
     }
+    /// Parses and validates a fixed-size peer handshake.
+    ///
+    /// **Inputs:** `input`, expected to contain exactly one 68-byte handshake.
+    ///
+    /// **Outputs:** A structured [`Handshake`], or `InvalidData` when the size,
+    /// protocol-name length, or protocol name is incorrect.
+    ///
+    /// **Logic:** Authenticate the framing constants first, then copy the three
+    /// fixed-width identity/feature fields into strongly sized arrays.
     pub fn decode(input: &[u8]) -> io::Result<Self> {
         if input.len() != HANDSHAKE_LEN || input[0] != 19 || &input[1..20] != PROTOCOL {
             return Err(io::Error::new(
@@ -69,6 +97,14 @@ pub struct PeerCodec {
     max_frame: usize,
 }
 impl PeerCodec {
+    /// Creates a codec with a defensive frame-size budget.
+    ///
+    /// **Inputs:** `max_frame`, the largest accepted length prefix in bytes.
+    ///
+    /// **Outputs:** A state-free codec configured with that upper bound.
+    ///
+    /// **Logic:** Store the limit for every subsequent decode. This converts a
+    /// remote peer's declared frame length into a locally controlled allocation.
     pub fn new(max_frame: usize) -> Self {
         Self { max_frame }
     }
@@ -77,6 +113,16 @@ impl PeerCodec {
 impl Decoder for PeerCodec {
     type Item = Message;
     type Error = io::Error;
+    // Inputs:
+    // - `self`: supplies the configured maximum frame size.
+    // - `src`: a persistent receive buffer that may hold partial/multiple frames.
+    // Outputs:
+    // - `Ok(None)` for incomplete data, `Ok(Some(Message))` for one complete
+    //   frame, or `io::Error` for an oversized/malformed frame.
+    // Logic:
+    // - Peek at the four-byte length without consuming it, enforce the budget,
+    //   wait for the entire frame, then consume exactly one frame and decode its
+    //   message ID/payload. Remaining bytes stay buffered for the next call.
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Message>> {
         if src.len() < 4 {
             return Ok(None);
@@ -133,6 +179,14 @@ impl Decoder for PeerCodec {
 
 impl Encoder<Message> for PeerCodec {
     type Error = io::Error;
+    // Inputs:
+    // - `item`: one structured peer message.
+    // - `dst`: caller-owned buffer to append the encoded frame to.
+    // Outputs:
+    // - `Ok(())` after appending bytes, or an I/O-compatible encoding error.
+    // Logic:
+    // - Calculate payload size, write a big-endian length and message ID, then
+    //   serialize variant-specific integers/bytes without an intermediate frame.
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> io::Result<()> {
         if item == Message::KeepAlive {
             dst.put_u32(0);
@@ -198,6 +252,14 @@ impl Encoder<Message> for PeerCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Inputs:
+    // - A structured piece message with a four-byte block.
+    // Outputs:
+    // - A passing round-trip assertion or test failure.
+    // Logic:
+    // - Encode into a shared buffer and decode from that same buffer to ensure
+    //   both directions agree on length, field order, and block ownership.
     #[test]
     fn codec_roundtrip_piece() {
         let msg = Message::Piece {
@@ -210,6 +272,12 @@ mod tests {
         c.encode(msg.clone(), &mut buf).unwrap();
         assert_eq!(c.decode(&mut buf).unwrap(), Some(msg));
     }
+    // Inputs:
+    // - A handshake containing recognizable repeated test bytes.
+    // Outputs:
+    // - A passing encode/decode equality assertion or test failure.
+    // Logic:
+    // - Verify every fixed offset survives a full wire-format round trip.
     #[test]
     fn handshake_roundtrip() {
         let h = Handshake {

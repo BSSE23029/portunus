@@ -2,9 +2,24 @@ syntax = "proto3";
 package portunus;
 
 service PortunusControl {
+  // Inputs: a source identifier and destination path.
+  // Outputs: acceptance state and the engine-assigned transfer ID.
+  // Logic: validates and submits work to the bounded engine command queue.
   rpc AddTransfer(TransferRequest) returns (TransferResponse);
+
+  // Inputs: an existing transfer ID.
+  // Outputs: whether the stop command was accepted.
+  // Logic: asks the engine actor to remove the transfer from active state.
   rpc StopTransfer(StopTransferRequest) returns (TransferResponse);
+
+  // Inputs: an empty subscription request.
+  // Outputs: a server stream containing the latest engine snapshots.
+  // Logic: bridges the engine watch channel into a gRPC stream.
   rpc StreamMetrics(Empty) returns (stream MetricsResponse);
+
+  // Inputs: only the optional configuration fields that should change.
+  // Outputs: the complete effective configuration after applying the update.
+  // Logic: modifies shared runtime configuration while preserving omitted fields.
   rpc UpdateConfig(ConfigUpdate) returns (ConfigResponse);
 }
 
@@ -44,4 +59,3 @@ message ConfigResponse {
   uint32 max_peers = 3;
   uint32 command_buffer = 4;
 }
-

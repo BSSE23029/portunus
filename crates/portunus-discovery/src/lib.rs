@@ -1,4 +1,15 @@
 //! Tracker discovery protocol primitives (BEP 15).
+//!
+//! Discovery is the systems problem of turning a logical content identifier
+//! into reachable network endpoints. This crate currently implements the binary
+//! packet layer; socket retries, deadlines, and provider abstractions come next.
+//!
+//! ```text
+//! client ──connect(transaction N)──> tracker
+//! client <──connection ID, N──────── tracker
+//! client ──announce(connection ID)─> tracker
+//! client <──compact peer endpoints── tracker
+//! ```
 use bytes::{BufMut, BytesMut};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use thiserror::Error;
@@ -17,6 +28,16 @@ pub enum Error {
     InvalidPeerList,
 }
 
+/// Builds the fixed-size UDP tracker connection request.
+///
+/// **Inputs:** `transaction_id`, chosen by the client to correlate an unreliable
+/// UDP response with this request.
+///
+/// **Outputs:** Exactly 16 network-order bytes containing protocol ID, connect
+/// action, and transaction ID.
+///
+/// **Logic:** Write each fixed-width integer into its protocol-defined offset in
+/// big-endian order. No heap allocation is necessary for a fixed packet.
 pub fn connect_request(transaction_id: u32) -> [u8; 16] {
     let mut out = [0; 16];
     out[..8].copy_from_slice(&UDP_PROTOCOL_ID.to_be_bytes());
@@ -25,6 +46,15 @@ pub fn connect_request(transaction_id: u32) -> [u8; 16] {
     out
 }
 
+/// Validates and extracts a UDP tracker connection ID.
+///
+/// **Inputs:** Raw response `bytes` and the transaction ID originally sent.
+///
+/// **Outputs:** The tracker's temporary connection ID, or a typed error for a
+/// truncated packet, wrong action, or mismatched transaction.
+///
+/// **Logic:** Validate the minimum size and correlation fields before trusting
+/// and decoding the final eight-byte connection identifier.
 pub fn parse_connect_response(bytes: &[u8], expected_transaction: u32) -> Result<u64, Error> {
     if bytes.len() < 16 {
         return Err(Error::Truncated);
@@ -40,6 +70,16 @@ pub fn parse_connect_response(bytes: &[u8], expected_transaction: u32) -> Result
     Ok(u64::from_be_bytes(bytes[8..16].try_into().unwrap()))
 }
 
+/// Decodes compact IPv4 peer endpoints.
+///
+/// **Inputs:** A byte slice containing zero or more six-byte records: four bytes
+/// of IPv4 address followed by a two-byte network-order port.
+///
+/// **Outputs:** Owned socket addresses, or [`Error::InvalidPeerList`] when a
+/// partial record remains.
+///
+/// **Logic:** Validate record alignment, split into exact six-byte chunks, and
+/// translate each chunk into Rust's standard `SocketAddr` representation.
 pub fn parse_compact_ipv4(bytes: &[u8]) -> Result<Vec<SocketAddr>, Error> {
     if !bytes.len().is_multiple_of(6) {
         return Err(Error::InvalidPeerList);
@@ -56,6 +96,16 @@ pub fn parse_compact_ipv4(bytes: &[u8]) -> Result<Vec<SocketAddr>, Error> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Encodes a UDP tracker announce request.
+///
+/// **Inputs:** Tracker connection/transaction IDs, 20-byte content and client
+/// identities, transfer counters, remaining bytes, and the listening port.
+///
+/// **Outputs:** A 98-byte mutable network buffer ready for UDP transmission.
+///
+/// **Logic:** Append BEP 15 fields in wire order and big-endian encoding. The
+/// request uses the neutral event/IP values, a random client key, and `-1` to
+/// request the tracker's default number of endpoints.
 pub fn announce_request(
     connection_id: u64,
     transaction_id: u32,
@@ -86,6 +136,13 @@ pub fn announce_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Inputs:
+    // - One six-byte compact record for 127.0.0.1:6881.
+    // Outputs:
+    // - A passing equality assertion or test failure.
+    // Logic:
+    // - Prove that network-order bytes become the expected standard endpoint.
     #[test]
     fn compact_peers() {
         assert_eq!(
@@ -93,6 +150,12 @@ mod tests {
             "127.0.0.1:6881".parse().unwrap()
         );
     }
+    // Inputs:
+    // - Transaction ID 7.
+    // Outputs:
+    // - A passing assertion that the final request field contains ID 7.
+    // Logic:
+    // - Exercise fixed-field placement independently of any network socket.
     #[test]
     fn connect_packet() {
         assert_eq!(&connect_request(7)[12..], &7u32.to_be_bytes());

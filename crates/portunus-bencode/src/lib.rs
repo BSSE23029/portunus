@@ -1,4 +1,25 @@
 //! A small, zero-copy bencode decoder.
+//!
+//! Bencode has four tokens: byte strings (`4:spam`), integers (`i42e`), lists
+//! (`l...e`), and dictionaries (`d...e`). The parser stores byte strings as
+//! slices of the input, which avoids allocating and copying their contents.
+//!
+//! ```text
+//! d4:name4:datae
+//! │ └─key └─value
+//! └─dictionary                  => { b"name": b"data" }
+//! ```
+//!
+//! # Example
+//!
+//! ```
+//! use portunus_bencode::{parse, Value};
+//!
+//! let input = b"li7e4:spame";
+//! let value = parse(input)?;
+//! assert_eq!(value, Value::List(vec![Value::Integer(7), Value::Bytes(b"spam")]));
+//! # Ok::<(), portunus_bencode::Error>(())
+//! ```
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -28,6 +49,16 @@ pub enum Error {
     NestingLimit,
 }
 
+/// Parses exactly one complete bencoded value.
+///
+/// **Inputs:** `input` is the complete encoded byte slice. It remains borrowed
+/// for as long as the returned [`Value`] exists.
+///
+/// **Outputs:** A zero-copy [`Value`] on success, or an [`enum@Error`] describing
+/// malformed input, excessive nesting, or trailing bytes.
+///
+/// **Logic:** Delegate recursive token recognition to `parse_at`, then require
+/// its cursor to equal the input length so accidental trailing data is rejected.
 pub fn parse(input: &[u8]) -> Result<Value<'_>, Error> {
     let (value, consumed) = parse_at(input, 0, 0)?;
     if consumed != input.len() {
@@ -36,6 +67,15 @@ pub fn parse(input: &[u8]) -> Result<Value<'_>, Error> {
     Ok(value)
 }
 
+// Inputs:
+// - `input`: the complete backing byte slice.
+// - `pos`: the byte offset of the next token.
+// - `depth`: current recursive container depth.
+// Outputs:
+// - A borrowed value and the offset immediately after it, or a parse error.
+// Logic:
+// - Inspect the leading token and recursively parse list/dictionary children.
+//   The explicit depth counter bounds stack use for hostile nested input.
 fn parse_at(input: &[u8], pos: usize, depth: usize) -> Result<(Value<'_>, usize), Error> {
     if depth > 128 {
         return Err(Error::NestingLimit);
@@ -71,6 +111,14 @@ fn parse_at(input: &[u8], pos: usize, depth: usize) -> Result<(Value<'_>, usize)
     }
 }
 
+// Inputs:
+// - `input`: the complete backing byte slice.
+// - `pos`: offset of the integer's leading `i` byte.
+// Outputs:
+// - `Value::Integer` and the position after `e`, or an integer-format error.
+// Logic:
+// - Find the terminator, enforce canonical spellings such as rejecting `03` and
+//   `-0`, decode UTF-8 digits, and use Rust's checked `i64` parser.
 fn parse_integer(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
     let end = input[pos + 1..]
         .iter()
@@ -90,6 +138,14 @@ fn parse_integer(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> 
     Ok((Value::Integer(number), end + 1))
 }
 
+// Inputs:
+// - `input`: the complete backing byte slice.
+// - `pos`: offset of the first decimal length digit.
+// Outputs:
+// - A borrowed `Value::Bytes` and its ending offset, or a length/input error.
+// Logic:
+// - Parse `<length>:`, check the end offset without integer overflow, then borrow
+//   that exact range rather than copying it into a new allocation.
 fn parse_bytes(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
     let colon = input[pos..]
         .iter()
@@ -113,6 +169,14 @@ fn parse_bytes(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Inputs:
+    // - Two fixed byte strings: one malformed and one valid nested dictionary.
+    // Outputs:
+    // - A passing assertion or a test failure.
+    // Logic:
+    // - Demonstrate rejection first, then verify recursive structure and borrowed
+    //   byte-string contents in the successful parse.
     #[test]
     fn parses_nested_zero_copy_value() {
         let source = b"d4:listli42e4:spam e";
@@ -126,6 +190,12 @@ mod tests {
             Value::List(vec![Value::Integer(42), Value::Bytes(b"spam")])
         );
     }
+    // Inputs:
+    // - The noncanonical integer representation `i03e`.
+    // Outputs:
+    // - A passing assertion only when the precise error is returned.
+    // Logic:
+    // - Protect canonical encoding rules so equivalent integers have one form.
     #[test]
     fn rejects_noncanonical_integer() {
         assert_eq!(parse(b"i03e"), Err(Error::InvalidInteger(0)));

@@ -2,6 +2,10 @@
 
 Portunus is a modular Rust P2P data orchestrator with a gRPC control plane and a BitTorrent-compatible data plane.
 
+Its product is the **reusable systems infrastructure**, not a consumer torrent client. BitTorrent is the reference workload used to exercise hostile binary input, unreliable discovery, stateful framed connections, out-of-order chunks, integrity verification, and bounded concurrency.
+
+Start with the illustrated [Systems Engineering Guide](docs/THEORY.md) for the theory behind the code. Every authored function also documents its inputs, outputs, and internal logic directly beside its implementation.
+
 ## Workspace
 
 - `portunus-proto`: generated gRPC contracts
