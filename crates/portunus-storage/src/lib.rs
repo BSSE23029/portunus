@@ -16,6 +16,8 @@ use tokio::{
     sync::Mutex,
 };
 
+pub mod integrity;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
