@@ -71,8 +71,8 @@ pub struct EngineEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StateHubConfig {
-    pub(super) max_jobs: usize,
-    pub(super) event_capacity: usize,
+    pub(crate) max_jobs: usize,
+    pub(crate) event_capacity: usize,
 }
 
 impl StateHubConfig {

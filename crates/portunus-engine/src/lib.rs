@@ -8,6 +8,7 @@
 //! discovery transports, or a consumer download product.
 
 pub mod budget;
+pub mod orchestrator;
 pub mod policy;
 pub mod runtime;
 pub mod telemetry;
