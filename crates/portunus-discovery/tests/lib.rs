@@ -1,6 +1,6 @@
 use portunus_discovery::{
-    announce_request, connect_request, parse_compact_ipv4, parse_connect_response, Error,
-    UDP_PROTOCOL_ID,
+    announce_request, connect_request, parse_announce_response, parse_compact_ipv4,
+    parse_connect_response, Error, UDP_PROTOCOL_ID,
 };
 
 // Inputs: transaction ID 7.
@@ -58,4 +58,27 @@ fn builds_announce_packet() {
     assert_eq!(&packet[12..16], &2_u32.to_be_bytes());
     assert_eq!(&packet[16..36], &[3; 20]);
     assert_eq!(&packet[96..], &6881_u16.to_be_bytes());
+}
+
+// Inputs: one valid announce response plus truncated and miscorrelated variants.
+// Outputs: tracker interval/endpoints or stable envelope errors.
+// Logic: validate correlation before compact endpoint payload interpretation.
+#[test]
+fn validates_announce_response() {
+    let mut packet = vec![0_u8; 26];
+    packet[..4].copy_from_slice(&1_u32.to_be_bytes());
+    packet[4..8].copy_from_slice(&7_u32.to_be_bytes());
+    packet[8..12].copy_from_slice(&30_u32.to_be_bytes());
+    packet[20..].copy_from_slice(&[127, 0, 0, 1, 0x1a, 0xe1]);
+    let (interval, endpoints) = parse_announce_response(&packet, 7).unwrap();
+    assert_eq!(interval, 30);
+    assert_eq!(endpoints, ["127.0.0.1:6881".parse().unwrap()]);
+    assert_eq!(
+        parse_announce_response(&packet, 8),
+        Err(Error::TransactionMismatch)
+    );
+    assert_eq!(
+        parse_announce_response(&packet[..19], 7),
+        Err(Error::Truncated)
+    );
 }

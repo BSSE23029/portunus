@@ -16,9 +16,11 @@ use thiserror::Error;
 
 mod api;
 mod r#static;
+mod udp;
 
 pub use api::{DiscoverOptions, DiscoveryError, DiscoveryProvider, DiscoverySnapshot, Endpoint};
 pub use r#static::StaticProvider;
+pub use udp::{RetryPolicy, UdpTrackerProvider};
 
 pub const UDP_PROTOCOL_ID: u64 = 0x0417_2710_1980;
 
@@ -32,6 +34,38 @@ pub enum Error {
     TransactionMismatch,
     #[error("compact peer list has invalid length")]
     InvalidPeerList,
+}
+
+/// Validates and decodes a UDP tracker announce response.
+///
+/// **Inputs:** Raw response bytes and the request transaction ID.
+///
+/// **Outputs:** Tracker refresh interval in seconds plus compact IPv4 endpoints,
+/// or a typed envelope/peer-list error.
+///
+/// **Logic:** Validate the 20-byte envelope, action and correlation fields before
+/// decoding the remaining six-byte endpoint records.
+///
+/// # Errors
+///
+/// Returns [`enum@Error`] for truncation, action/correlation mismatch, or malformed peers.
+pub fn parse_announce_response(
+    bytes: &[u8],
+    expected_transaction: u32,
+) -> Result<(u32, Vec<SocketAddr>), Error> {
+    if bytes.len() < 20 {
+        return Err(Error::Truncated);
+    }
+    let action = u32::from_be_bytes(bytes[0..4].try_into().map_err(|_| Error::Truncated)?);
+    if action != 1 {
+        return Err(Error::Action(action));
+    }
+    let transaction = u32::from_be_bytes(bytes[4..8].try_into().map_err(|_| Error::Truncated)?);
+    if transaction != expected_transaction {
+        return Err(Error::TransactionMismatch);
+    }
+    let interval = u32::from_be_bytes(bytes[8..12].try_into().map_err(|_| Error::Truncated)?);
+    Ok((interval, parse_compact_ipv4(&bytes[20..])?))
 }
 
 /// Builds the fixed-size UDP tracker connection request.

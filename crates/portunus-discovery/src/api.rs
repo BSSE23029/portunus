@@ -223,6 +223,8 @@ impl DiscoverySnapshot {
 pub enum DiscoveryError {
     #[error("maximum endpoints must be greater than zero")]
     InvalidEndpointLimit,
+    #[error("retry policy requires attempts and nonzero bounded timeouts")]
+    InvalidRetryPolicy,
     #[error("discovery request was cancelled")]
     Cancelled,
     #[error("discovery deadline elapsed")]
