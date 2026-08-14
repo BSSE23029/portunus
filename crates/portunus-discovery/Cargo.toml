@@ -6,13 +6,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 bytes.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["tokio"]
+tokio-util.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

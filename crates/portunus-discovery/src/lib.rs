@@ -14,6 +14,12 @@ use bytes::{BufMut, BytesMut};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use thiserror::Error;
 
+mod api;
+mod r#static;
+
+pub use api::{DiscoverOptions, DiscoveryError, DiscoveryProvider, DiscoverySnapshot, Endpoint};
+pub use r#static::StaticProvider;
+
 pub const UDP_PROTOCOL_ID: u64 = 0x0417_2710_1980;
 
 #[derive(Debug, Error, PartialEq, Eq)]

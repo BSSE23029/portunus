@@ -797,10 +797,13 @@ dependencies = [
 name = "portunus-discovery"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "rand 0.8.7",
  "thiserror",
  "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
