@@ -13,6 +13,13 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
+mod session;
+
+pub use session::{
+    LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
+    TransitionError,
+};
+
 pub const PROTOCOL: &[u8; 19] = b"BitTorrent protocol";
 pub const HANDSHAKE_LEN: usize = 68;
 

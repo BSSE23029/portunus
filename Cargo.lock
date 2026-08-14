@@ -839,6 +839,7 @@ dependencies = [
  "bytes",
  "thiserror",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]

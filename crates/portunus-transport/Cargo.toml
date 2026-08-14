@@ -9,6 +9,7 @@ repository.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
+tracing.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["thiserror"]
