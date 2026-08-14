@@ -14,6 +14,7 @@ use tokio_util::codec::{Decoder, Encoder};
 
 mod buffer;
 mod correlation;
+pub mod pool;
 mod reconnect;
 mod runtime;
 mod session;
@@ -26,9 +27,9 @@ pub use buffer::{
 pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
 pub use reconnect::{ReconnectConfigError, ReconnectPolicy};
 pub use runtime::{
-    start_session, start_session_with_buffers, start_timed_session,
-    start_timed_session_with_buffers, FrameCodec, HeartbeatFactory, Session, SessionError,
-    SessionReport,
+    start_session, start_session_with_buffers, start_session_with_pool, start_timed_session,
+    start_timed_session_with_buffers, start_timed_session_with_pool, FrameCodec, HeartbeatFactory,
+    Session, SessionError, SessionReport, TimedSessionStartError,
 };
 pub use session::{
     LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
@@ -88,7 +89,6 @@ impl Handshake {
     /// protocol-name length, or protocol name is incorrect.
     /// **Logic:** Authenticate the framing constants first, then copy the three
     /// fixed-width identity/feature fields into strongly sized arrays.
-    ///
     /// # Errors
     ///
     /// Returns `InvalidData` when size, protocol length, or name is invalid.

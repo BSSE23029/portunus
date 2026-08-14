@@ -1,6 +1,8 @@
 use bytes::BytesMut;
 use portunus_transport::{
-    start_session_with_buffers, BufferBudget, Message, PeerCodec, SessionConfig,
+    pool::{BufferPool, BufferPoolConfig},
+    start_session_with_buffers, start_session_with_pool, BufferBudget, Message, PeerCodec,
+    SessionConfig,
 };
 use std::io;
 use tokio::io::{duplex, AsyncWriteExt};
@@ -97,4 +99,39 @@ async fn rejects_one_over_the_inbound_buffer_limit() {
     let failure = session.join().await.unwrap_err();
     assert_eq!(failure.operation(), "inbound_buffer");
     assert_eq!(failure.kind(), io::ErrorKind::InvalidData);
+}
+
+// Inputs: two sequential sessions sharing a two-entry explicitly bounded pool.
+// Outputs: first join returns both allocations and second startup reuses both.
+// Logic: prove runtime ownership integrates RAII pooling across session lifetimes.
+#[tokio::test]
+async fn reuses_pooled_allocations_across_sessions() {
+    let pool = BufferPool::new(BufferPoolConfig::new(2, 64).unwrap());
+    let budget = BufferBudget::new(64, 64).unwrap();
+
+    let (first_io, _first_remote) = duplex(64);
+    let first = start_session_with_pool(
+        first_io,
+        PeerCodec::new(64),
+        SessionConfig::new(1, 1, 1).unwrap(),
+        budget,
+        &pool,
+    )
+    .unwrap();
+    first.cancel();
+    first.join().await.unwrap();
+    assert_eq!(pool.snapshot().retained_buffers(), 2);
+
+    let (second_io, _second_remote) = duplex(64);
+    let second = start_session_with_pool(
+        second_io,
+        PeerCodec::new(64),
+        SessionConfig::new(1, 1, 1).unwrap(),
+        budget,
+        &pool,
+    )
+    .unwrap();
+    assert_eq!(pool.snapshot().reuses(), 2);
+    second.cancel();
+    second.join().await.unwrap();
 }

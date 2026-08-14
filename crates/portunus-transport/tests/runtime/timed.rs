@@ -1,11 +1,15 @@
 use bytes::BytesMut;
+use portunus_transport::pool::{BufferPool, BufferPoolConfig};
 use portunus_transport::{
-    start_timed_session, start_timed_session_with_buffers, BufferBudget, HeartbeatFactory, Message,
-    PeerCodec, SessionConfig, TimingConfig,
+    start_timed_session, start_timed_session_with_buffers, start_timed_session_with_pool,
+    BufferBudget, HeartbeatFactory, Message, PeerCodec, SessionConfig, TimingConfig,
 };
 use std::{io, time::Duration};
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::Encoder;
+
+#[path = "timed/start.rs"]
+mod start;
 
 // Inputs: a stateful zero-I/O closure used as a heartbeat adapter.
 // Outputs: successive owned values produced through the public factory trait.
@@ -152,4 +156,30 @@ async fn inbound_activity_postpones_idle_eviction() {
 
     tokio::time::advance(Duration::from_secs(9)).await;
     assert_eq!(session.join().await.unwrap_err().operation(), "idle");
+}
+
+// Inputs: timed session with explicit shared two-entry pool and immediate cancellation.
+// Outputs: both runtime allocations return to the pool after join.
+// Logic: ensure timed execution uses the same RAII allocation lifecycle as base sessions.
+#[tokio::test(start_paused = true)]
+async fn returns_timed_session_allocations_to_the_pool() {
+    let pool = BufferPool::new(BufferPoolConfig::new(2, 64).unwrap());
+    let (client, _remote) = duplex(64);
+    let timing = TimingConfig::new(Duration::from_secs(1), Duration::from_secs(2)).unwrap();
+    let deadline = tokio::time::Instant::now().into_std() + Duration::from_mins(1);
+    let session = start_timed_session_with_pool(
+        client,
+        PeerCodec::new(64),
+        SessionConfig::new(1, 1, 1).unwrap(),
+        BufferBudget::new(64, 64).unwrap(),
+        &pool,
+        timing,
+        deadline,
+        || Message::KeepAlive,
+    )
+    .unwrap();
+
+    session.cancel();
+    session.join().await.unwrap();
+    assert_eq!(pool.snapshot().retained_buffers(), 2);
 }

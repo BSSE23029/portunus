@@ -14,7 +14,7 @@
 //! This module does not connect sockets, select a protocol, correlate requests,
 //! schedule reconnection, install tracing output, or promise transport delivery.
 
-use crate::{BufferAccountant, BufferBudget, LifecycleEvent, SessionConfig, SessionMachine};
+use crate::{pool::PooledBuffer, BufferAccountant, LifecycleEvent, SessionMachine};
 use bytes::BytesMut;
 use std::io;
 use tokio::{
@@ -26,13 +26,44 @@ use tokio_util::sync::CancellationToken;
 
 mod buffer;
 mod report;
+mod start;
 mod timed;
 
 use buffer::{close, fail, read_bounded, write_bounded};
 pub use report::{SessionError, SessionReport};
-pub use timed::{start_timed_session, start_timed_session_with_buffers, HeartbeatFactory};
+pub use start::{start_session, start_session_with_buffers, start_session_with_pool};
+pub use timed::{
+    start_timed_session, start_timed_session_with_buffers, start_timed_session_with_pool,
+    HeartbeatFactory, TimedSessionStartError,
+};
 
-const DEFAULT_BUFFER_BYTES: usize = 1024 * 1024;
+/// Private ownership adapter shared by owned and RAII-pooled byte buffers.
+trait BufferHandle: Send + 'static {
+    /// Borrows the underlying mutable byte buffer without transferring ownership.
+    ///
+    /// **Inputs:** Exclusive buffer-handle borrow.
+    /// **Outputs:** Exclusive `BytesMut` borrow for one codec/I/O operation.
+    /// **Logic:** Keep event-loop code generic while drop policy remains handle-specific.
+    fn bytes_mut(&mut self) -> &mut BytesMut;
+}
+
+impl BufferHandle for BytesMut {
+    // Inputs: exclusive owned buffer borrow.
+    // Outputs: the same buffer borrow.
+    // Logic: owned buffers require no ownership adaptation.
+    fn bytes_mut(&mut self) -> &mut BytesMut {
+        self
+    }
+}
+
+impl BufferHandle for PooledBuffer {
+    // Inputs: exclusive RAII pooled-handle borrow.
+    // Outputs: exclusive underlying buffer borrow.
+    // Logic: delegate without allowing the allocation to escape its return guard.
+    fn bytes_mut(&mut self) -> &mut BytesMut {
+        self.bytes_mut()
+    }
+}
 
 /// Codec boundary between protocol messages and persistent byte buffers.
 pub trait FrameCodec: Send + 'static {
@@ -137,70 +168,19 @@ impl<I, O> Session<I, O> {
     }
 }
 
-/// Spawns one bounded framed runtime over an already established duplex stream.
-///
-/// **Inputs:** Owned async stream, codec, and validated independent capacities.
-///
-/// **Outputs:** Application handle owning bounded channels, cancellation, and join.
-///
-/// **Logic:** Allocate exactly the configured queue slots and one ownership task.
-pub fn start_session<T, C>(
-    io: T,
-    codec: C,
-    config: SessionConfig,
-) -> Session<C::Inbound, C::Outbound>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    C: FrameCodec,
-{
-    start_session_with_buffers(io, codec, config, default_buffer_budget())
-}
-
-/// Spawns one bounded framed runtime with explicit logical buffer ceilings.
-///
-/// **Inputs:** Owned async stream/codec, queue configuration, and buffer budget.
-/// **Outputs:** Application handle owning bounded channels, cancellation, and join.
-/// **Logic:** Allocate configured queues and give one task the codec, I/O, and accountant.
-pub fn start_session_with_buffers<T, C>(
-    io: T,
-    codec: C,
-    config: SessionConfig,
-    buffer_budget: BufferBudget,
-) -> Session<C::Inbound, C::Outbound>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    C: FrameCodec,
-{
-    let (inbound_tx, inbound) = mpsc::channel(config.inbound_capacity());
-    let (outbound, outbound_rx) = mpsc::channel(config.outbound_capacity());
-    let cancellation = CancellationToken::new();
-    let task_cancellation = cancellation.clone();
-    let task = tokio::spawn(run(
-        io,
-        codec,
-        BufferAccountant::new(buffer_budget),
-        inbound_tx,
-        outbound_rx,
-        task_cancellation,
-    ));
-    Session {
-        inbound,
-        outbound,
-        cancellation,
-        task,
-    }
-}
-
 /// Owns the codec/stream event loop until cancellation, EOF, or terminal failure.
 ///
 /// **Inputs:** Owned I/O, codec, bounded channel halves, and cancellation token.
 /// **Outputs:** Measured closed report or normalized operation failure.
 /// **Logic:** Prefer already-buffered frames, otherwise select between one read,
 /// one outbound message, and cancellation; every successful handoff is counted.
-async fn run<T, C>(
+#[allow(clippy::too_many_arguments)]
+async fn run<T, C, I, O>(
     mut io: T,
     mut codec: C,
     mut accountant: BufferAccountant,
+    mut input: I,
+    mut output: O,
     inbound: mpsc::Sender<C::Inbound>,
     mut outbound: mpsc::Receiver<C::Outbound>,
     cancellation: CancellationToken,
@@ -208,19 +188,18 @@ async fn run<T, C>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
     C: FrameCodec,
+    I: BufferHandle,
+    O: BufferHandle,
 {
     let mut machine = SessionMachine::new();
     machine
         .apply(LifecycleEvent::Connected)
         .expect("valid start");
-    let initial = accountant.budget().max_inbound_bytes().min(8 * 1024);
-    let mut input = BytesMut::with_capacity(initial);
-    let mut output = BytesMut::new();
     let mut inbound_frames = 0_u64;
     let mut outbound_frames = 0_u64;
 
     loop {
-        match codec.decode_frame(&mut input) {
+        match codec.decode_frame(input.bytes_mut()) {
             Ok(Some(frame)) => {
                 tokio::select! {
                     result = inbound.send(frame) => {
@@ -237,7 +216,7 @@ where
 
         tokio::select! {
             () = cancellation.cancelled() => break,
-            read = read_bounded(&mut io, &mut input, &mut accountant) => {
+            read = read_bounded(&mut io, input.bytes_mut(), &mut accountant) => {
                 if read? == 0 {
                     return close(io, machine, inbound_frames, outbound_frames, accountant).await;
                 }
@@ -246,7 +225,7 @@ where
                 let Some(item) = item else {
                     return close(io, machine, inbound_frames, outbound_frames, accountant).await;
                 };
-                write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
+                write_bounded(&mut io, &mut codec, item, output.bytes_mut(), &mut accountant).await?;
                 outbound_frames += 1;
             }
         }
@@ -257,17 +236,15 @@ where
         .expect("active session");
     outbound.close();
     while let Some(item) = outbound.recv().await {
-        write_bounded(&mut io, &mut codec, item, &mut output, &mut accountant).await?;
+        write_bounded(
+            &mut io,
+            &mut codec,
+            item,
+            output.bytes_mut(),
+            &mut accountant,
+        )
+        .await?;
         outbound_frames += 1;
     }
     close(io, machine, inbound_frames, outbound_frames, accountant).await
-}
-
-/// Returns the compatibility default one-mebibyte limits for both directions.
-///
-/// **Inputs:** No environmental state.
-/// **Outputs:** Validated default logical buffer budget.
-/// **Logic:** Keep legacy constructor bounded while explicit constructors remain tunable.
-fn default_buffer_budget() -> BufferBudget {
-    BufferBudget::new(DEFAULT_BUFFER_BYTES, DEFAULT_BUFFER_BYTES).expect("positive defaults")
 }

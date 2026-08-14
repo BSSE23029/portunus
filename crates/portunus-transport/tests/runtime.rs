@@ -9,6 +9,8 @@ use tokio_util::codec::Encoder;
 mod buffer;
 #[path = "runtime/report.rs"]
 mod report;
+#[path = "runtime/start.rs"]
+mod start;
 #[path = "runtime/timed.rs"]
 mod timed;
 
