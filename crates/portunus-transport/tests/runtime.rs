@@ -7,6 +7,8 @@ use tokio_util::codec::Encoder;
 
 #[path = "runtime/report.rs"]
 mod report;
+#[path = "runtime/timed.rs"]
+mod timed;
 
 // Inputs: one-slot queues over an in-memory full-duplex transport.
 // Outputs: exact admission at capacity, explicit overflow, and framed delivery.

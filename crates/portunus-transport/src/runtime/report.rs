@@ -123,4 +123,17 @@ impl SessionError {
             detail,
         }
     }
+
+    /// Builds a stable timeout error for runtime timing termination.
+    ///
+    /// **Inputs:** Static `idle` or `deadline` operation label.
+    /// **Outputs:** Timed-out session failure with bounded diagnostic detail.
+    /// **Logic:** Preserve terminal policy reason without exposing timer internals.
+    pub(super) fn timeout(operation: &'static str) -> Self {
+        Self {
+            operation,
+            kind: io::ErrorKind::TimedOut,
+            detail: format!("{operation} boundary elapsed"),
+        }
+    }
 }

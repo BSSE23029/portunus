@@ -1,5 +1,4 @@
 //! `BitTorrent` peer-wire handshake and framed message codec.
-//!
 //! TCP is an ordered byte stream: a single read may contain half a message or
 //! several messages. [`PeerCodec`] preserves incomplete bytes in `BytesMut` and
 //! emits a message only when its full length-prefixed frame is available.
@@ -21,7 +20,10 @@ mod timing;
 
 pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
 pub use reconnect::{ReconnectConfigError, ReconnectPolicy};
-pub use runtime::{start_session, FrameCodec, Session, SessionError, SessionReport};
+pub use runtime::{
+    start_session, start_timed_session, FrameCodec, HeartbeatFactory, Session, SessionError,
+    SessionReport,
+};
 pub use session::{
     LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
     TransitionError,

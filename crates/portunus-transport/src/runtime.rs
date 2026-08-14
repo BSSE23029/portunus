@@ -26,8 +26,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
 
 mod report;
+mod timed;
 
 pub use report::{SessionError, SessionReport};
+pub use timed::{start_timed_session, HeartbeatFactory};
 
 /// Codec boundary between protocol messages and persistent byte buffers.
 pub trait FrameCodec: Send + 'static {

@@ -173,4 +173,38 @@ impl ConnectionTimer {
         }
         action
     }
+
+    /// Returns the earliest instant at which any timing action may become due.
+    ///
+    /// **Inputs:** Shared timer state.
+    /// **Outputs:** Minimum of connection deadline, idle boundary, and heartbeat boundary.
+    /// **Logic:** Checked addition treats an overflowing relative boundary as later
+    /// than the finite absolute deadline, avoiding panics for hostile durations.
+    #[must_use]
+    pub fn next_wakeup(&self) -> Instant {
+        self.deadline
+            .min(self.relative_boundary(self.last_inbound, self.config.idle))
+            .min(self.relative_boundary(self.last_outbound, self.config.heartbeat))
+    }
+
+    /// Returns the earliest terminal deadline or idle-eviction boundary.
+    ///
+    /// **Inputs:** Shared timer state.
+    /// **Outputs:** Minimum absolute terminal wakeup instant.
+    /// **Logic:** Exclude heartbeat so bounded inbound delivery can defer liveness
+    /// output without spinning or weakening terminal enforcement.
+    #[must_use]
+    pub fn terminal_wakeup(&self) -> Instant {
+        self.deadline
+            .min(self.relative_boundary(self.last_inbound, self.config.idle))
+    }
+
+    /// Adds a relative duration under the connection's finite deadline ceiling.
+    ///
+    /// **Inputs:** Base monotonic instant and positive validated duration.
+    /// **Outputs:** Sum, or the connection deadline when standard instant range overflows.
+    /// **Logic:** Overflow denotes a boundary later than any enforceable connection work.
+    fn relative_boundary(&self, base: Instant, duration: Duration) -> Instant {
+        base.checked_add(duration).unwrap_or(self.deadline)
+    }
 }
