@@ -23,6 +23,10 @@
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+mod limits;
+
+pub use limits::{LimitKind, Limits};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<'a> {
     Bytes(&'a [u8]),
@@ -45,8 +49,12 @@ pub enum Error {
     NonByteKey(usize),
     #[error("trailing data at byte {0}")]
     TrailingData(usize),
-    #[error("nesting limit exceeded")]
-    NestingLimit,
+    #[error("{kind:?} limit {limit} exceeded at byte {offset}")]
+    LimitExceeded {
+        kind: LimitKind,
+        offset: usize,
+        limit: usize,
+    },
 }
 
 /// Parses exactly one complete bencoded value.
@@ -64,7 +72,33 @@ pub enum Error {
 ///
 /// Returns a typed syntax, boundary, trailing-data, or nesting-limit error.
 pub fn parse(input: &[u8]) -> Result<Value<'_>, Error> {
-    let (value, consumed) = parse_at(input, 0, 0)?;
+    parse_with_limits(input, Limits::default())
+}
+
+/// Parses exactly one complete bencoded value under explicit resource limits.
+///
+/// **Inputs:** `input` is the complete borrowed encoding and `limits` supplies
+/// inclusive ceilings for all parser-controlled resources.
+///
+/// **Outputs:** A borrowed [`Value`] on success, or a precise syntax, boundary,
+/// trailing-data, or resource-limit error.
+///
+/// **Logic:** Reject oversized input before traversal, recursively decode with
+/// the same policy, then require the cursor to consume the complete input.
+///
+/// # Errors
+///
+/// Returns a typed error at the byte where malformed input or excess work is
+/// first observable.
+pub fn parse_with_limits(input: &[u8], limits: Limits) -> Result<Value<'_>, Error> {
+    if input.len() > limits.input_len {
+        return Err(Error::LimitExceeded {
+            kind: LimitKind::InputLength,
+            offset: limits.input_len,
+            limit: limits.input_len,
+        });
+    }
+    let (value, consumed) = parse_at(input, 0, 0, &limits)?;
     if consumed != input.len() {
         return Err(Error::TrailingData(consumed));
     }
@@ -74,43 +108,50 @@ pub fn parse(input: &[u8]) -> Result<Value<'_>, Error> {
 // Inputs:
 // - `input`: the complete backing byte slice.
 // - `pos`: the byte offset of the next token.
-// - `depth`: current recursive container depth.
+// - `depth`: number of containers enclosing the next token.
+// - `limits`: shared immutable resource policy.
 // Outputs:
 // - A borrowed value and the offset immediately after it, or a parse error.
 // Logic:
 // - Inspect the leading token and recursively parse list/dictionary children.
 //   The explicit depth counter bounds stack use for hostile nested input.
-fn parse_at(input: &[u8], pos: usize, depth: usize) -> Result<(Value<'_>, usize), Error> {
-    if depth > 128 {
-        return Err(Error::NestingLimit);
-    }
+fn parse_at<'a>(
+    input: &'a [u8],
+    pos: usize,
+    depth: usize,
+    limits: &Limits,
+) -> Result<(Value<'a>, usize), Error> {
     match input.get(pos).copied().ok_or(Error::UnexpectedEof)? {
         b'i' => parse_integer(input, pos),
         b'l' => {
+            enforce_depth(depth, pos, limits)?;
             let mut values = Vec::new();
             let mut cursor = pos + 1;
             while input.get(cursor) != Some(&b'e') {
-                let (value, next) = parse_at(input, cursor, depth + 1)?;
+                enforce_collection_len(values.len(), cursor, limits)?;
+                let (value, next) = parse_at(input, cursor, depth + 1, limits)?;
                 values.push(value);
                 cursor = next;
             }
             Ok((Value::List(values), cursor + 1))
         }
         b'd' => {
+            enforce_depth(depth, pos, limits)?;
             let mut values = BTreeMap::new();
             let mut cursor = pos + 1;
             while input.get(cursor) != Some(&b'e') {
-                let (key, next) = parse_bytes(input, cursor)?;
+                enforce_collection_len(values.len(), cursor, limits)?;
+                let (key, next) = parse_bytes(input, cursor, limits)?;
                 let Value::Bytes(key) = key else {
                     return Err(Error::NonByteKey(cursor));
                 };
-                let (value, next) = parse_at(input, next, depth + 1)?;
+                let (value, next) = parse_at(input, next, depth + 1, limits)?;
                 values.insert(key, value);
                 cursor = next;
             }
             Ok((Value::Dictionary(values), cursor + 1))
         }
-        b'0'..=b'9' => parse_bytes(input, pos),
+        b'0'..=b'9' => parse_bytes(input, pos, limits),
         _ => Err(Error::InvalidToken(pos)),
     }
 }
@@ -150,7 +191,11 @@ fn parse_integer(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> 
 // Logic:
 // - Parse `<length>:`, check the end offset without integer overflow, then borrow
 //   that exact range rather than copying it into a new allocation.
-fn parse_bytes(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
+fn parse_bytes<'a>(
+    input: &'a [u8],
+    pos: usize,
+    limits: &Limits,
+) -> Result<(Value<'a>, usize), Error> {
     let colon = input[pos..]
         .iter()
         .position(|b| *b == b':')
@@ -164,8 +209,43 @@ fn parse_bytes(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
         .map_err(|_| Error::InvalidLength(pos))?
         .parse()
         .map_err(|_| Error::InvalidLength(pos))?;
+    if len > limits.byte_string_len {
+        return Err(Error::LimitExceeded {
+            kind: LimitKind::ByteStringLength,
+            offset: pos,
+            limit: limits.byte_string_len,
+        });
+    }
     let start = colon + 1;
     let end = start.checked_add(len).ok_or(Error::InvalidLength(pos))?;
     let bytes = input.get(start..end).ok_or(Error::UnexpectedEof)?;
     Ok((Value::Bytes(bytes), end))
+}
+
+// Inputs: current enclosing-container count, token offset, and resource policy.
+// Outputs: unit when another container is allowed, otherwise a precise limit error.
+// Logic: treat the configured maximum as inclusive and identify the rejected token.
+const fn enforce_depth(depth: usize, offset: usize, limits: &Limits) -> Result<(), Error> {
+    if depth >= limits.depth {
+        return Err(Error::LimitExceeded {
+            kind: LimitKind::Depth,
+            offset,
+            limit: limits.depth,
+        });
+    }
+    Ok(())
+}
+
+// Inputs: accepted item count, next item offset, and resource policy.
+// Outputs: unit when another item is allowed, otherwise a precise limit error.
+// Logic: check before parsing or allocating the first item beyond the ceiling.
+const fn enforce_collection_len(count: usize, offset: usize, limits: &Limits) -> Result<(), Error> {
+    if count >= limits.collection_len {
+        return Err(Error::LimitExceeded {
+            kind: LimitKind::CollectionLength,
+            offset,
+            limit: limits.collection_len,
+        });
+    }
+    Ok(())
 }
