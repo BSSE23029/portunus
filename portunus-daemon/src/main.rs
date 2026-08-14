@@ -11,6 +11,7 @@
 
 use portunus_daemon::{
     auth::{AuthConfig, AuthInterceptor},
+    errors::engine_status,
     logging::{init_global_logging, LoggingConfig},
     operations::{mark_draining, mark_serving},
 };
@@ -46,7 +47,7 @@ impl PortunusControl for Control {
             .engine
             .add_transfer(r.source, PathBuf::from(r.destination))
             .await
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            .map_err(engine_status)?;
         Ok(Response::new(TransferResponse {
             transfer_id: id,
             accepted: true,
@@ -68,7 +69,7 @@ impl PortunusControl for Control {
         self.engine
             .stop_transfer(id.clone())
             .await
-            .map_err(|e| Status::not_found(e.to_string()))?;
+            .map_err(engine_status)?;
         Ok(Response::new(TransferResponse {
             transfer_id: id,
             accepted: true,

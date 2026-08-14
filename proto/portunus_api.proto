@@ -59,3 +59,10 @@ message ConfigResponse {
   uint32 max_peers = 3;
   uint32 command_buffer = 4;
 }
+
+// Stable machine-readable detail encoded in gRPC Status.details.
+message ErrorDetail {
+  string reason = 1;
+  bool retryable = 2;
+  string resource = 3;
+}
