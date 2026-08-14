@@ -14,8 +14,9 @@ use portunus_daemon::{
     auth::AuthConfig,
     errors::{engine_status, fault_status},
     fault::{DisabledFaults, FaultInjector, FaultPoint},
-    logging::{init_global_logging, LoggingConfig},
+    logging::{init_global_logging_with_tracer, LoggingConfig},
     operations::{mark_draining, mark_serving},
+    telemetry::{TelemetryConfig, TelemetryRuntime},
 };
 use portunus_engine::torrent::{Config, Engine};
 use portunus_proto::{
@@ -41,6 +42,7 @@ impl PortunusControl for Control {
     // Logic:
     // - Remove the protobuf envelope, convert the destination into a path, submit
     //   through the engine's bounded actor API, and map domain errors to gRPC.
+    #[tracing::instrument(skip_all, fields(rpc.method = "AddTransfer"))]
     async fn add_transfer(
         &self,
         request: Request<TransferRequest>,
@@ -67,6 +69,7 @@ impl PortunusControl for Control {
     // Logic:
     // - Forward the identifier through the engine command queue and preserve it
     //   in the success response for easy client-side correlation.
+    #[tracing::instrument(skip_all, fields(rpc.method = "StopTransfer"))]
     async fn stop_transfer(
         &self,
         request: Request<StopTransferRequest>,
@@ -94,6 +97,7 @@ impl PortunusControl for Control {
     // Logic:
     // - Read the latest watch value, convert it to protobuf, yield it, then await
     //   a change. Slow clients naturally keep only the latest watch snapshot.
+    #[tracing::instrument(skip_all, fields(rpc.method = "StreamMetrics"))]
     async fn stream_metrics(
         &self,
         _: Request<Empty>,
@@ -112,6 +116,7 @@ impl PortunusControl for Control {
     // Logic:
     // - Mutate only supplied fields under the engine's config write lock, then
     //   obtain a fresh snapshot and translate it back to the wire contract.
+    #[tracing::instrument(skip_all, fields(rpc.method = "UpdateConfig"))]
     async fn update_config(
         &self,
         request: Request<ConfigUpdate>,
@@ -148,8 +153,8 @@ impl PortunusControl for Control {
 
 #[tokio::main]
 // Inputs:
-// - Optional `PORTUNUS_ADDR`, `PORTUNUS_LOG`, `RUST_LOG`, and
-//   `PORTUNUS_BEARER_TOKEN`, and `PORTUNUS_MAX_IN_FLIGHT` environment variables.
+// - Optional address, logging, authentication, admission, and OTLP environment
+//   variables documented by their configuration adapters.
 // Outputs:
 // - A running gRPC server until Ctrl-C, or a boxed startup/runtime error.
 // Logic:
@@ -157,7 +162,18 @@ impl PortunusControl for Control {
 //   engine, register its gRPC adapter, and drain gracefully on the OS signal.
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logging = LoggingConfig::from_env()?;
-    init_global_logging(&logging)?;
+    let otlp_endpoint = std::env::var("PORTUNUS_OTLP_ENDPOINT").ok();
+    let trace_queue = std::env::var("PORTUNUS_TRACE_QUEUE").ok();
+    let export_batch = std::env::var("PORTUNUS_EXPORT_BATCH").ok();
+    let metric_interval = std::env::var("PORTUNUS_METRIC_INTERVAL_MS").ok();
+    let telemetry_config = TelemetryConfig::from_sources(
+        otlp_endpoint.as_deref(),
+        trace_queue.as_deref(),
+        export_batch.as_deref(),
+        metric_interval.as_deref(),
+    )?;
+    let telemetry = TelemetryRuntime::start(&telemetry_config)?;
+    init_global_logging_with_tracer(&logging, telemetry.tracer())?;
     let addr: SocketAddr = std::env::var("PORTUNUS_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:50051".into())
         .parse()?;
@@ -167,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine: Engine::start(Config::default()),
         faults: Arc::new(DisabledFaults),
     };
-    tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
+    tracing::info!(%addr, log_filter = logging.filter(), telemetry = telemetry.is_enabled(), "Portunus control plane listening");
     let in_flight = std::env::var("PORTUNUS_MAX_IN_FLIGHT").ok();
     let admission = AdmissionConfig::from_source(in_flight.as_deref())?;
     let control =
@@ -177,7 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
         .build_v1()?;
-    Server::builder()
+    let serve_result = Server::builder()
         .add_service(health_service)
         .add_service(reflection)
         .add_service(control)
@@ -186,6 +202,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mark_draining(&mut health_reporter).await;
             tracing::info!("Portunus control plane draining");
         })
-        .await?;
+        .await;
+    let telemetry_result = telemetry.shutdown();
+    serve_result?;
+    telemetry_result?;
     Ok(())
 }

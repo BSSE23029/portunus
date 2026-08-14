@@ -6,3 +6,4 @@ pub mod errors;
 pub mod fault;
 pub mod logging;
 pub mod operations;
+pub mod telemetry;

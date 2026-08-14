@@ -22,8 +22,9 @@
 //! module does not choose log sinks, rotate files, or initialize telemetry in
 //! reusable crates; those remain deployment and composition-root concerns.
 
+use opentelemetry_sdk::trace::SdkTracer;
 use thiserror::Error;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Validated process-wide logging configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,10 +151,39 @@ pub enum LoggingError {
 ///
 /// Returns [`LoggingError`] for filter reconstruction or duplicate initialization.
 pub fn init_global_logging(config: &LoggingConfig) -> Result<(), LoggingError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(config.env_filter()?)
-        .try_init()
-        .map_err(|error| LoggingError::AlreadyInitialized {
-            reason: error.to_string(),
-        })
+    init_global_logging_with_tracer(config, None)
+}
+
+/// Installs formatting/filtering plus an optional OpenTelemetry tracing layer.
+///
+/// **Inputs:** Validated logging policy and optional tracer owned by the daemon's
+/// telemetry runtime; global subscriber state must still be uninitialized.
+///
+/// **Outputs:** Unit after the one process subscriber is installed, or typed failure.
+///
+/// **Logic:** Build one registry so local logs and exported spans observe identical
+/// filtering; only enabled telemetry adds the OpenTelemetry layer.
+///
+/// # Errors
+///
+/// Returns [`LoggingError`] for filter reconstruction or duplicate initialization.
+pub fn init_global_logging_with_tracer(
+    config: &LoggingConfig,
+    tracer: Option<SdkTracer>,
+) -> Result<(), LoggingError> {
+    let filter = config.env_filter()?;
+    let result = match tracer {
+        Some(tracer) => tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_opentelemetry::layer().with_tracer(tracer))
+            .try_init(),
+        None => tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .try_init(),
+    };
+    result.map_err(|error| LoggingError::AlreadyInitialized {
+        reason: error.to_string(),
+    })
 }

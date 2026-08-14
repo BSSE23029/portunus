@@ -8,6 +8,7 @@
 //! cover health/reflection, choose retry delays, or install global observability.
 
 use crate::auth::{AuthConfig, AuthInterceptor};
+use crate::telemetry::{AdmissionOutcome, OperationalMetrics};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -50,6 +51,7 @@ impl AdmissionConfig {
 #[derive(Clone, Debug)]
 pub struct AdmissionInterceptor {
     permits: Arc<Semaphore>,
+    metrics: OperationalMetrics,
 }
 
 impl AdmissionInterceptor {
@@ -60,7 +62,16 @@ impl AdmissionInterceptor {
     pub fn new(config: AdmissionConfig) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(config.limit)),
+            metrics: OperationalMetrics::global(),
         }
+    }
+
+    // Inputs: authenticated request rejected before capacity admission.
+    // Outputs: one fixed-cardinality unauthenticated metric increment.
+    // Logic: share the same counter instance owned by the admission boundary.
+    fn record_unauthenticated(&self) {
+        self.metrics
+            .record_admission(AdmissionOutcome::Unauthenticated);
     }
 }
 
@@ -70,12 +81,14 @@ impl Interceptor for AdmissionInterceptor {
     // Logic: never wait; attach RAII ownership to extensions for the RPC lifetime.
     #[allow(clippy::result_large_err)]
     fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
-        let permit = Arc::clone(&self.permits)
-            .try_acquire_owned()
-            .map_err(|_| Status::resource_exhausted("control plane is overloaded"))?;
+        let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
+            self.metrics.record_admission(AdmissionOutcome::Overloaded);
+            return Err(Status::resource_exhausted("control plane is overloaded"));
+        };
         request
             .extensions_mut()
             .insert(RequestPermit(Arc::new(permit)));
+        self.metrics.record_admission(AdmissionOutcome::Accepted);
         Ok(request)
     }
 }
@@ -108,7 +121,13 @@ impl Interceptor for ControlInterceptor {
     // Logic: apply authentication then attach one shared admission permit.
     #[allow(clippy::result_large_err)]
     fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-        self.admission.call(self.auth.call(request)?)
+        match self.auth.call(request) {
+            Ok(request) => self.admission.call(request),
+            Err(error) => {
+                self.admission.record_unauthenticated();
+                Err(error)
+            }
+        }
     }
 }
 
