@@ -10,7 +10,8 @@
 //! ```
 
 use portunus_daemon::{
-    auth::{AuthConfig, AuthInterceptor},
+    admission::{AdmissionConfig, ControlInterceptor},
+    auth::AuthConfig,
     errors::engine_status,
     logging::{init_global_logging, LoggingConfig},
     operations::{mark_draining, mark_serving},
@@ -134,7 +135,7 @@ impl PortunusControl for Control {
 #[tokio::main]
 // Inputs:
 // - Optional `PORTUNUS_ADDR`, `PORTUNUS_LOG`, `RUST_LOG`, and
-//   `PORTUNUS_BEARER_TOKEN` environment variables.
+//   `PORTUNUS_BEARER_TOKEN`, and `PORTUNUS_MAX_IN_FLIGHT` environment variables.
 // Outputs:
 // - A running gRPC server until Ctrl-C, or a boxed startup/runtime error.
 // Logic:
@@ -152,7 +153,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine: Engine::start(Config::default()),
     };
     tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
-    let control = PortunusControlServer::with_interceptor(service, AuthInterceptor::new(auth));
+    let in_flight = std::env::var("PORTUNUS_MAX_IN_FLIGHT").ok();
+    let admission = AdmissionConfig::from_source(in_flight.as_deref())?;
+    let control =
+        PortunusControlServer::with_interceptor(service, ControlInterceptor::new(auth, admission));
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     mark_serving(&mut health_reporter).await;
     let reflection = tonic_reflection::server::Builder::configure()
