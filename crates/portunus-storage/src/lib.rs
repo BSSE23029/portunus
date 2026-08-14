@@ -17,6 +17,7 @@ use tokio::{
 };
 
 pub mod assembly;
+pub mod content;
 pub mod integrity;
 
 #[derive(Debug, Error)]

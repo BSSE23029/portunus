@@ -21,7 +21,7 @@ fn assembles_sparse_out_of_order_blocks() {
     let progress = assembler.ingest(0, b"da").unwrap();
     assert_eq!(progress.received_bytes, 4);
     assert!(progress.complete);
-    assert_eq!(assembler.finish().unwrap(), b"data");
+    assert_eq!(assembler.finish().unwrap().bytes(), b"data");
 }
 
 // Inputs: zero, exact, and one-over independent configuration boundaries.

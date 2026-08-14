@@ -16,6 +16,37 @@
 use crate::integrity::{ContentId, IntegrityError, IntegrityValidator};
 use thiserror::Error;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedChunk {
+    identity: ContentId,
+    bytes: Vec<u8>,
+}
+
+impl VerifiedChunk {
+    /// Inputs: shared validation-proof chunk reference.
+    /// Outputs: borrowed content identity used for addressing and diagnostics.
+    /// Logic: expose immutable identity without permitting proof construction.
+    #[must_use]
+    pub const fn identity(&self) -> &ContentId {
+        &self.identity
+    }
+
+    /// Inputs: shared validation-proof chunk reference.
+    /// Outputs: borrowed complete validated payload bytes.
+    /// Logic: permit reads without copying or weakening commit eligibility.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    // Inputs: owned validation-proof chunk.
+    // Outputs: owned identity and payload for the storage I/O boundary.
+    // Logic: preserve proof construction privacy while avoiding commit-time copies.
+    pub(crate) fn into_parts(self) -> (ContentId, Vec<u8>) {
+        (self.identity, self.bytes)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AssemblyConfig {
     max_chunk_bytes: usize,
@@ -152,11 +183,11 @@ impl<V: IntegrityValidator> ChunkAssembler<V> {
     }
 
     /// Inputs: fully owned assembler state.
-    /// Outputs: verified committable bytes or incomplete/integrity failure.
+    /// Outputs: validation-proof committable chunk or incomplete/integrity failure.
     /// Logic: require exact coverage, then invoke the selected validator once.
     /// # Errors
     /// Returns `Incomplete` or wraps the validator's stable integrity details.
-    pub fn finish(self) -> Result<Vec<u8>, AssemblyError> {
+    pub fn finish(self) -> Result<VerifiedChunk, AssemblyError> {
         if self.received_bytes != self.bytes.len() {
             return Err(AssemblyError::Incomplete {
                 received: self.received_bytes,
@@ -165,7 +196,10 @@ impl<V: IntegrityValidator> ChunkAssembler<V> {
         }
         self.validator
             .validate(&self.bytes, self.identity.digest())?;
-        Ok(self.bytes)
+        Ok(VerifiedChunk {
+            identity: self.identity,
+            bytes: self.bytes,
+        })
     }
 
     // Inputs: shared assembler state.
