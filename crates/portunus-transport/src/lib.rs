@@ -14,15 +14,19 @@ use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
 mod correlation;
+mod reconnect;
 mod runtime;
 mod session;
+mod timing;
 
 pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
+pub use reconnect::{ReconnectConfigError, ReconnectPolicy};
 pub use runtime::{start_session, FrameCodec, Session, SessionError, SessionReport};
 pub use session::{
     LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
     TransitionError,
 };
+pub use timing::{ConnectionTimer, TimingAction, TimingConfig, TimingConfigError};
 
 impl FrameCodec for PeerCodec {
     type Inbound = Message;
