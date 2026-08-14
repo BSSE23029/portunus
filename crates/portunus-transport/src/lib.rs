@@ -13,12 +13,33 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
+mod runtime;
 mod session;
 
+pub use runtime::{start_session, FrameCodec, Session, SessionError, SessionReport};
 pub use session::{
     LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
     TransitionError,
 };
+
+impl FrameCodec for PeerCodec {
+    type Inbound = Message;
+    type Outbound = Message;
+
+    // Inputs: mutable codec and persistent caller-owned receive buffer.
+    // Outputs: one decoded peer message, incomplete state, or I/O-compatible error.
+    // Logic: delegate to the BitTorrent adapter's Tokio decoder implementation.
+    fn decode_frame(&mut self, source: &mut BytesMut) -> io::Result<Option<Self::Inbound>> {
+        Decoder::decode(self, source)
+    }
+
+    // Inputs: one owned peer message and mutable caller-owned transmit buffer.
+    // Outputs: appended wire frame or I/O-compatible encoding error.
+    // Logic: delegate to the BitTorrent adapter's Tokio encoder implementation.
+    fn encode_frame(&mut self, item: Self::Outbound, destination: &mut BytesMut) -> io::Result<()> {
+        Encoder::encode(self, item, destination)
+    }
+}
 
 pub const PROTOCOL: &[u8; 19] = b"BitTorrent protocol";
 pub const HANDSHAKE_LEN: usize = 68;
