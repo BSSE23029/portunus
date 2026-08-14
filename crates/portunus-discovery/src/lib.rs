@@ -15,11 +15,13 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use thiserror::Error;
 
 mod api;
+mod refresh;
 mod r#static;
 mod udp;
 
 pub use api::{DiscoverOptions, DiscoveryError, DiscoveryProvider, DiscoverySnapshot, Endpoint};
 pub use r#static::StaticProvider;
+pub use refresh::RefreshingProvider;
 pub use udp::{RetryPolicy, UdpTrackerProvider};
 
 pub const UDP_PROTOCOL_ID: u64 = 0x0417_2710_1980;
