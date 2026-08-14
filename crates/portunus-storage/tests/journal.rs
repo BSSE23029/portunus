@@ -45,7 +45,8 @@ async fn recovers_records_and_discards_torn_tail() {
         (snapshot.blocks[1].offset, &*snapshot.blocks[1].bytes),
         (0, &b"da"[..])
     );
-    let identity = ContentId::new("sha1", portunus_storage::sha1(b"data")).unwrap();
+    let identity =
+        ContentId::new("sha1", portunus_storage::integrity::sha1_digest(b"data")).unwrap();
     let mut assembler = ChunkAssembler::new(
         snapshot.chunk_length,
         identity,

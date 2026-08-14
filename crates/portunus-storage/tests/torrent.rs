@@ -1,4 +1,7 @@
-use portunus_storage::{sha1, Error, PieceStore};
+use portunus_storage::{
+    integrity::sha1_digest,
+    torrent::{Error, PieceStore},
+};
 use std::path::PathBuf;
 
 // Inputs: a test-specific filename suffix.
@@ -10,13 +13,18 @@ fn test_path(suffix: &str) -> PathBuf {
 
 // Inputs: two valid pieces, including a shorter final piece.
 // Outputs: a preallocated file containing both verified pieces.
-// Logic: exercise layout, final-length calculation, hashing, seek, and commit.
+// Logic: exercise compatibility layout, hashing, shared cursor, and commit.
 #[tokio::test]
 async fn writes_verified_pieces() {
     let path = test_path("valid");
-    let store = PieceStore::create(&path, 5, 8, vec![sha1(b"first"), sha1(b"end")])
-        .await
-        .unwrap();
+    let store = PieceStore::create(
+        &path,
+        5,
+        8,
+        vec![sha1_digest(b"first"), sha1_digest(b"end")],
+    )
+    .await
+    .unwrap();
     store.write_verified_piece(1, b"end").await.unwrap();
     store.write_verified_piece(0, b"first").await.unwrap();
     assert_eq!(tokio::fs::read(&path).await.unwrap(), b"firstend");
@@ -25,11 +33,11 @@ async fn writes_verified_pieces() {
 
 // Inputs: incorrect bytes and an out-of-range piece index.
 // Outputs: hash mismatch and invalid-piece errors with an unchanged file.
-// Logic: verify validation happens before acquiring the disk commit path.
+// Logic: verify validation happens before acquiring the disk compatibility path.
 #[tokio::test]
 async fn rejects_untrusted_pieces() {
     let path = test_path("invalid");
-    let store = PieceStore::create(&path, 5, 5, vec![sha1(b"right")])
+    let store = PieceStore::create(&path, 5, 5, vec![sha1_digest(b"right")])
         .await
         .unwrap();
     assert!(matches!(

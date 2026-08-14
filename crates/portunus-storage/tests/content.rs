@@ -16,7 +16,7 @@ fn test_root(suffix: &str) -> PathBuf {
 // Outputs: integrity-proven chunk that is eligible for transactional commit.
 // Logic: cross the public assembly/validation boundary without bypass constructors.
 fn verified(bytes: &[u8]) -> portunus_storage::assembly::VerifiedChunk {
-    let identity = ContentId::new("sha1", portunus_storage::sha1(bytes)).unwrap();
+    let identity = ContentId::new("sha1", portunus_storage::integrity::sha1_digest(bytes)).unwrap();
     let mut assembler = ChunkAssembler::new(
         bytes.len(),
         identity,

@@ -827,6 +827,7 @@ dependencies = [
 name = "portunus-storage"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "sha1",
  "thiserror",
  "tokio",

@@ -8,7 +8,8 @@ use portunus_storage::{
 // Logic: prove arrival order is independent from bounded assembly and validation.
 #[test]
 fn assembles_sparse_out_of_order_blocks() {
-    let identity = ContentId::new("sha1", portunus_storage::sha1(b"data")).unwrap();
+    let identity =
+        ContentId::new("sha1", portunus_storage::integrity::sha1_digest(b"data")).unwrap();
     let mut assembler = ChunkAssembler::new(
         4,
         identity,
@@ -78,7 +79,8 @@ fn enforces_chunk_and_buffer_boundaries() {
 // Logic: isolate malformed ingestion and integrity failure before commit eligibility.
 #[test]
 fn rejects_malformed_or_unverified_assembly() {
-    let identity = ContentId::new("sha1", portunus_storage::sha1(b"good")).unwrap();
+    let identity =
+        ContentId::new("sha1", portunus_storage::integrity::sha1_digest(b"good")).unwrap();
     let mut assembler = ChunkAssembler::new(
         4,
         identity,
@@ -107,7 +109,8 @@ fn rejects_malformed_or_unverified_assembly() {
         }
     );
 
-    let identity = ContentId::new("sha1", portunus_storage::sha1(b"good")).unwrap();
+    let identity =
+        ContentId::new("sha1", portunus_storage::integrity::sha1_digest(b"good")).unwrap();
     let mut corrupt = ChunkAssembler::new(
         4,
         identity,

@@ -20,7 +20,8 @@ impl IntegrityValidator for ExactValidator {
 // Logic: prove SHA-1 remains an adapter over the generic integrity contract.
 #[test]
 fn validates_sha1_content_identity() {
-    let identity = ContentId::new("sha1", portunus_storage::sha1(b"chunk")).unwrap();
+    let identity =
+        ContentId::new("sha1", portunus_storage::integrity::sha1_digest(b"chunk")).unwrap();
     assert_eq!(identity.algorithm(), "sha1");
     assert_eq!(identity.digest().len(), 20);
     Sha1Validator.validate(b"chunk", identity.digest()).unwrap();

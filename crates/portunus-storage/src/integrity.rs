@@ -83,6 +83,14 @@ pub trait IntegrityValidator: Send + Sync {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sha1Validator;
 
+/// Inputs: arbitrary complete `data` bytes.
+/// Outputs: deterministic 20-byte SHA-1 compatibility digest.
+/// Logic: hash the full slice once and convert the fixed digest into an array.
+#[must_use]
+pub fn sha1_digest(data: &[u8]) -> [u8; 20] {
+    Sha1::digest(data).into()
+}
+
 impl IntegrityValidator for Sha1Validator {
     /// Inputs: complete candidate bytes and an expected 20-byte SHA-1 digest.
     /// Outputs: success, exact length details, or an integrity mismatch.
@@ -94,7 +102,7 @@ impl IntegrityValidator for Sha1Validator {
                 actual: expected.len(),
             });
         }
-        if Sha1::digest(data).as_slice() == expected {
+        if sha1_digest(data).as_slice() == expected {
             Ok(())
         } else {
             Err(IntegrityError::Mismatch)
