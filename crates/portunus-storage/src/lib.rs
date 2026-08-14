@@ -19,6 +19,7 @@ use tokio::{
 pub mod assembly;
 pub mod content;
 pub mod integrity;
+pub mod journal;
 
 #[derive(Debug, Error)]
 pub enum Error {
