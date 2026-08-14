@@ -11,5 +11,12 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "orchestration"
+harness = false
+
 [lints]
 workspace = true

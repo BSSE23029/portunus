@@ -1079,6 +1079,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "criterion",
  "rand 0.8.7",
  "thiserror",
  "tokio",
@@ -1090,6 +1091,7 @@ dependencies = [
 name = "portunus-engine"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1122,6 +1124,7 @@ name = "portunus-transport"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "criterion",
  "thiserror",
  "tokio",
  "tokio-util",

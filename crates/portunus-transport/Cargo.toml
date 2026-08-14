@@ -16,7 +16,12 @@ tracing.workspace = true
 ignored = ["thiserror"]
 
 [dev-dependencies]
+criterion.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+
+[[bench]]
+name = "transport"
+harness = false
 
 [lints]
 workspace = true
