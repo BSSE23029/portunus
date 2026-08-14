@@ -13,9 +13,11 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
+mod correlation;
 mod runtime;
 mod session;
 
+pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
 pub use runtime::{start_session, FrameCodec, Session, SessionError, SessionReport};
 pub use session::{
     LifecycleEvent, SessionConfig, SessionConfigError, SessionMachine, SessionState,
