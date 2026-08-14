@@ -12,12 +12,17 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
+mod buffer;
 mod correlation;
 mod reconnect;
 mod runtime;
 mod session;
 mod timing;
 
+pub use buffer::{
+    BufferAccountant, BufferBudget, BufferConfigError, BufferDirection, BufferLimitError,
+    BufferUsage,
+};
 pub use correlation::{CorrelationError, CorrelationId, CorrelationInsertError, CorrelationTable};
 pub use reconnect::{ReconnectConfigError, ReconnectPolicy};
 pub use runtime::{
@@ -61,12 +66,9 @@ pub struct Handshake {
 
 impl Handshake {
     /// Serializes a structured handshake into its fixed wire representation.
-    ///
     /// **Inputs:** The handshake's reserved feature bits, content info hash, and
     /// peer identity through `self`.
-    ///
     /// **Outputs:** Exactly 68 bytes suitable for writing to a TCP connection.
-    ///
     /// **Logic:** Place the protocol length/name and each fixed-size field at the
     /// offsets defined by the peer-wire protocol.
     #[must_use]
@@ -80,9 +82,7 @@ impl Handshake {
         out
     }
     /// Parses and validates a fixed-size peer handshake.
-    ///
     /// **Inputs:** `input`, expected to contain exactly one 68-byte handshake.
-    ///
     /// **Outputs:** A structured [`Handshake`], or `InvalidData` when the size,
     /// protocol-name length, or protocol name is incorrect.
     ///
