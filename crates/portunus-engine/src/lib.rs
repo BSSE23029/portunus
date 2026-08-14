@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, oneshot, watch, RwLock};
 pub mod budget;
 pub mod policy;
 pub mod runtime;
+pub mod telemetry;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
