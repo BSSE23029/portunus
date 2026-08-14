@@ -1,3 +1,25 @@
+//! Resource policy for hostile bencode inputs.
+//!
+//! [`Limits`] separates four independent inclusive budgets: bytes accepted from
+//! the caller, nested containers entered by the parser, entries retained in any
+//! one list or dictionary, and bytes exposed by any one string. Keeping those
+//! dimensions separate lets a control-plane message permit a deep but tiny tree
+//! while a metadata workload permits large byte strings without permitting
+//! unbounded collections.
+//!
+//! The parser checks each budget before performing the work it protects:
+//!
+//! ```text
+//! input length ──> enter container ──> accept next entry ──> borrow string
+//!      │                  │                    │                   │
+//! total bytes        stack depth       vector/map growth     exposed bytes
+//! ```
+//!
+//! This module defines policy only. It does not parse bytes, allocate collection
+//! storage, perform I/O, or choose application-specific limits. Defaults provide
+//! a bounded convenience policy; production callers should select budgets from
+//! their own admission-control and memory accounting rules.
+
 /// Resource ceilings applied while decoding untrusted input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
