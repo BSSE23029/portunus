@@ -14,10 +14,15 @@ opentelemetry-otlp.workspace = true
 opentelemetry-http.workspace = true
 opentelemetry_sdk.workspace = true
 portunus-engine = { version = "0.1.0", path = "../crates/portunus-engine" }
+portunus-bencode = { version = "0.1.0", path = "../crates/portunus-bencode" }
+portunus-discovery = { version = "0.1.0", path = "../crates/portunus-discovery" }
 portunus-proto = { version = "0.1.0", path = "../crates/portunus-proto" }
+portunus-storage = { version = "0.1.0", path = "../crates/portunus-storage" }
+portunus-transport = { version = "0.1.0", path = "../crates/portunus-transport" }
 prost.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+tokio-util.workspace = true
 tonic.workspace = true
 tonic-health.workspace = true
 tonic-reflection.workspace = true
