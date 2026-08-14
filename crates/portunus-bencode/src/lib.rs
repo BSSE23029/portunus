@@ -25,7 +25,6 @@ use thiserror::Error;
 
 mod access;
 mod deserialize;
-mod deserialize_collections;
 mod encode;
 mod limits;
 

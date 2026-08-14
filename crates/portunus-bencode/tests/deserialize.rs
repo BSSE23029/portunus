@@ -2,6 +2,9 @@ use portunus_bencode::{from_slice, DeserializePath};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+#[path = "deserialize/collections.rs"]
+mod collections;
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 struct Metadata<'a> {
     #[serde(borrow)]

@@ -15,15 +15,16 @@
 //! This module does not coerce booleans, interpret application schemas, retain
 //! encoded spans, or weaken parser resource limits.
 
-use crate::{
-    deserialize_collections::{DictionaryAccess, ListAccess},
-    parse, Value,
-};
+use crate::{parse, Value};
 use serde::{
     de::{self, Visitor},
     Deserialize,
 };
 use std::fmt;
+
+mod collections;
+
+use collections::{DictionaryAccess, ListAccess};
 
 /// One owned segment in a failed deserialization path.
 #[derive(Debug, Clone, PartialEq, Eq)]
