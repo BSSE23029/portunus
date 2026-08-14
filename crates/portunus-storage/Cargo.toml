@@ -10,3 +10,5 @@ sha1.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
+[lints]
+workspace = true

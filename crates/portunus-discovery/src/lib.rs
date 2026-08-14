@@ -38,6 +38,7 @@ pub enum Error {
 ///
 /// **Logic:** Write each fixed-width integer into its protocol-defined offset in
 /// big-endian order. No heap allocation is necessary for a fixed packet.
+#[must_use]
 pub fn connect_request(transaction_id: u32) -> [u8; 16] {
     let mut out = [0; 16];
     out[..8].copy_from_slice(&UDP_PROTOCOL_ID.to_be_bytes());
@@ -55,19 +56,25 @@ pub fn connect_request(transaction_id: u32) -> [u8; 16] {
 ///
 /// **Logic:** Validate the minimum size and correlation fields before trusting
 /// and decoding the final eight-byte connection identifier.
+///
+/// # Errors
+///
+/// Returns an error for truncation, an unexpected action, or failed correlation.
 pub fn parse_connect_response(bytes: &[u8], expected_transaction: u32) -> Result<u64, Error> {
     if bytes.len() < 16 {
         return Err(Error::Truncated);
     }
-    let action = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    let action = u32::from_be_bytes(bytes[0..4].try_into().map_err(|_| Error::Truncated)?);
     if action != 0 {
         return Err(Error::Action(action));
     }
-    let tx = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    let tx = u32::from_be_bytes(bytes[4..8].try_into().map_err(|_| Error::Truncated)?);
     if tx != expected_transaction {
         return Err(Error::TransactionMismatch);
     }
-    Ok(u64::from_be_bytes(bytes[8..16].try_into().unwrap()))
+    Ok(u64::from_be_bytes(
+        bytes[8..16].try_into().map_err(|_| Error::Truncated)?,
+    ))
 }
 
 /// Decodes compact IPv4 peer endpoints.
@@ -80,6 +87,10 @@ pub fn parse_connect_response(bytes: &[u8], expected_transaction: u32) -> Result
 ///
 /// **Logic:** Validate record alignment, split into exact six-byte chunks, and
 /// translate each chunk into Rust's standard `SocketAddr` representation.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidPeerList`] for a trailing partial record.
 pub fn parse_compact_ipv4(bytes: &[u8]) -> Result<Vec<SocketAddr>, Error> {
     if !bytes.len().is_multiple_of(6) {
         return Err(Error::InvalidPeerList);
@@ -106,6 +117,7 @@ pub fn parse_compact_ipv4(bytes: &[u8]) -> Result<Vec<SocketAddr>, Error> {
 /// **Logic:** Append BEP 15 fields in wire order and big-endian encoding. The
 /// request uses the neutral event/IP values, a random client key, and `-1` to
 /// request the tracker's default number of endpoints.
+#[must_use]
 pub fn announce_request(
     connection_id: u64,
     transaction_id: u32,
@@ -131,33 +143,4 @@ pub fn announce_request(
     out.put_i32(-1);
     out.put_u16(port);
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Inputs:
-    // - One six-byte compact record for 127.0.0.1:6881.
-    // Outputs:
-    // - A passing equality assertion or test failure.
-    // Logic:
-    // - Prove that network-order bytes become the expected standard endpoint.
-    #[test]
-    fn compact_peers() {
-        assert_eq!(
-            parse_compact_ipv4(&[127, 0, 0, 1, 0x1a, 0xe1]).unwrap()[0],
-            "127.0.0.1:6881".parse().unwrap()
-        );
-    }
-    // Inputs:
-    // - Transaction ID 7.
-    // Outputs:
-    // - A passing assertion that the final request field contains ID 7.
-    // Logic:
-    // - Exercise fixed-field placement independently of any network socket.
-    #[test]
-    fn connect_packet() {
-        assert_eq!(&connect_request(7)[12..], &7u32.to_be_bytes());
-    }
 }

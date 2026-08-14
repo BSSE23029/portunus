@@ -13,3 +13,8 @@ tonic.workspace = true
 [build-dependencies]
 tonic-build.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["prost", "tonic-build"]
+
+[lints]
+workspace = true

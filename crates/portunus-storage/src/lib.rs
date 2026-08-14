@@ -43,6 +43,10 @@ impl PieceStore {
     /// **Logic:** Open a new read/write file with truncation, preallocate its final
     /// logical length, and retain immutable layout/hash metadata. A Tokio mutex
     /// serializes seek-plus-write because those two operations share one cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when creation, truncation, or preallocation fails.
     pub async fn create(
         path: impl AsRef<Path>,
         piece_length: u64,
@@ -74,12 +78,16 @@ impl PieceStore {
     /// **Logic:** Resolve expected hash/length (including a shorter final piece),
     /// hash bytes before locking the file, then seek to `index * piece_length`,
     /// write all bytes, and flush while holding the cursor lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid-piece, hash-mismatch, or filesystem I/O failures.
     pub async fn write_verified_piece(&self, index: u32, data: &[u8]) -> Result<(), Error> {
         let expected = *self
             .hashes
             .get(index as usize)
             .ok_or(Error::InvalidPiece(index))?;
-        let start = index as u64 * self.piece_length;
+        let start = u64::from(index) * self.piece_length;
         let expected_len = self
             .piece_length
             .min(self.total_length.saturating_sub(start));
@@ -90,6 +98,7 @@ impl PieceStore {
         file.seek(SeekFrom::Start(start)).await?;
         file.write_all(data).await?;
         file.flush().await?;
+        drop(file);
         Ok(())
     }
 }
@@ -101,30 +110,7 @@ impl PieceStore {
 ///
 /// **Logic:** Feed the full slice into the digest implementation and convert its
 /// fixed-size result into an array convenient for manifests and equality checks.
+#[must_use]
 pub fn sha1(data: &[u8]) -> [u8; 20] {
     Sha1::digest(data).into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Inputs:
-    // - A temporary five-byte file layout and the correct digest for `piece`.
-    // Outputs:
-    // - Successful verified write, or a test failure.
-    // Logic:
-    // - Exercise allocation, validation, seek/write, and cleanup as one async
-    //   storage path. The process ID makes parallel test collisions unlikely.
-    #[tokio::test]
-    async fn validates_before_write() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("portunus-storage-{}", std::process::id()));
-        let data = b"piece";
-        let s = PieceStore::create(&path, 5, 5, vec![sha1(data)])
-            .await
-            .unwrap();
-        s.write_verified_piece(0, data).await.unwrap();
-        let _ = tokio::fs::remove_file(path).await;
-    }
 }

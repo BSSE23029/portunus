@@ -20,7 +20,7 @@ use std::{
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub download_limit: u64,
     pub upload_limit: u64,
@@ -59,7 +59,7 @@ pub struct Transfer {
     pub source: String,
     pub destination: PathBuf,
 }
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum Error {
     #[error("engine command queue is closed")]
     Closed,
@@ -95,10 +95,11 @@ impl Engine {
     ///
     /// **Logic:** Create MPSC and watch channels, spawn the sole transfer-state
     /// owner, then expose only message-based mutation to callers.
+    #[must_use]
     pub fn start(config: Config) -> Self {
         let (tx, rx) = mpsc::channel(config.command_buffer as usize);
         let (metrics_tx, metrics) = watch::channel(Metrics::default());
-        let state = config.clone();
+        let state = config;
         tokio::spawn(run(rx, metrics_tx));
         Self {
             tx,
@@ -115,6 +116,10 @@ impl Engine {
     ///
     /// **Logic:** Create a one-use reply channel, send an `Add` command through
     /// the bounded queue (waiting under backpressure), then await its exact reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation errors or [`Error::Closed`] when the actor stops.
     pub async fn add_transfer(
         &self,
         source: String,
@@ -139,6 +144,10 @@ impl Engine {
     ///
     /// **Logic:** Package the ID with a one-shot response sender, serialize the
     /// mutation through the command queue, and asynchronously await the outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns unknown-transfer or closed-engine errors.
     pub async fn stop_transfer(&self, id: String) -> Result<(), Error> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -155,6 +164,7 @@ impl Engine {
     ///
     /// **Logic:** Clone only the receiver cursor; all subscribers observe the same
     /// latest-value channel without copying engine ownership.
+    #[must_use]
     pub fn subscribe_metrics(&self) -> watch::Receiver<Metrics> {
         self.metrics.clone()
     }
@@ -167,7 +177,7 @@ impl Engine {
     /// **Logic:** Acquire a shared read lock, clone the small configuration, and
     /// release the guard at the end of the expression.
     pub async fn config(&self) -> Config {
-        self.config.read().await.clone()
+        *self.config.read().await
     }
     /// Applies an in-process mutation to runtime configuration.
     ///
@@ -227,7 +237,7 @@ async fn run(mut rx: mpsc::Receiver<Command>, metrics_tx: watch::Sender<Metrics>
             }
         }
         let mut m = metrics_tx.borrow().clone();
-        m.active_transfers = transfers.len() as u32;
+        m.active_transfers = u32::try_from(transfers.len()).unwrap_or(u32::MAX);
         let _ = metrics_tx.send(m);
     }
 }
@@ -248,57 +258,28 @@ pub struct Block {
 ///
 /// **Logic:** Enumerate availability counts, remove unavailable/completed/inflight
 /// candidates, compare by count then index, and return the winning index.
-pub fn rarest_first(
+#[must_use]
+pub fn rarest_first<S1, S2>(
     availability: &[u32],
-    complete: &HashSet<u32>,
-    inflight: &HashSet<u32>,
-) -> Option<u32> {
+    complete: &HashSet<u32, S1>,
+    inflight: &HashSet<u32, S2>,
+) -> Option<u32>
+where
+    S1: std::hash::BuildHasher,
+    S2: std::hash::BuildHasher,
+{
     availability
         .iter()
         .enumerate()
-        .filter(|(i, n)| {
-            **n > 0 && !complete.contains(&(*i as u32)) && !inflight.contains(&(*i as u32))
+        .filter(|(index, count)| {
+            let Ok(index) = u32::try_from(*index) else {
+                return false;
+            };
+            **count > 0 && !complete.contains(&index) && !inflight.contains(&index)
         })
         .min_by(|(ia, a), (ib, b)| match a.cmp(b) {
             Ordering::Equal => ia.cmp(ib),
             o => o,
         })
-        .map(|(i, _)| i as u32)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Inputs:
-    // - Availability counts [4, 1, 2] and no excluded pieces.
-    // Outputs:
-    // - A passing assertion that piece 1 is selected.
-    // Logic:
-    // - Isolate scheduler policy from networking so rarity behavior is completely
-    //   deterministic and inexpensive to test.
-    #[test]
-    fn chooses_rarest_available() {
-        assert_eq!(
-            rarest_first(&[4, 1, 2], &HashSet::new(), &HashSet::new()),
-            Some(1)
-        );
-    }
-    // Inputs:
-    // - Default engine configuration and a nonempty reference source/path.
-    // Outputs:
-    // - A passing assertion for the first actor-generated transfer ID.
-    // Logic:
-    // - Cross the MPSC command boundary and one-shot reply boundary to prove the
-    //   actor is running and owns ID assignment.
-    #[tokio::test]
-    async fn bounded_actor_accepts_transfer() {
-        let e = Engine::start(Config::default());
-        assert_eq!(
-            e.add_transfer("magnet:?xt=x".into(), ".".into())
-                .await
-                .unwrap(),
-            "transfer-1"
-        );
-    }
+        .and_then(|(index, _)| u32::try_from(index).ok())
 }

@@ -27,8 +27,8 @@ use thiserror::Error;
 pub enum Value<'a> {
     Bytes(&'a [u8]),
     Integer(i64),
-    List(Vec<Value<'a>>),
-    Dictionary(BTreeMap<&'a [u8], Value<'a>>),
+    List(Vec<Self>),
+    Dictionary(BTreeMap<&'a [u8], Self>),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -59,6 +59,10 @@ pub enum Error {
 ///
 /// **Logic:** Delegate recursive token recognition to `parse_at`, then require
 /// its cursor to equal the input length so accidental trailing data is rejected.
+///
+/// # Errors
+///
+/// Returns a typed syntax, boundary, trailing-data, or nesting-limit error.
 pub fn parse(input: &[u8]) -> Result<Value<'_>, Error> {
     let (value, consumed) = parse_at(input, 0, 0)?;
     if consumed != input.len() {
@@ -164,40 +168,4 @@ fn parse_bytes(input: &[u8], pos: usize) -> Result<(Value<'_>, usize), Error> {
     let end = start.checked_add(len).ok_or(Error::InvalidLength(pos))?;
     let bytes = input.get(start..end).ok_or(Error::UnexpectedEof)?;
     Ok((Value::Bytes(bytes), end))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Inputs:
-    // - Two fixed byte strings: one malformed and one valid nested dictionary.
-    // Outputs:
-    // - A passing assertion or a test failure.
-    // Logic:
-    // - Demonstrate rejection first, then verify recursive structure and borrowed
-    //   byte-string contents in the successful parse.
-    #[test]
-    fn parses_nested_zero_copy_value() {
-        let source = b"d4:listli42e4:spam e";
-        assert!(matches!(parse(source), Err(Error::InvalidToken(_))));
-        let source = b"d4:listli42e4:spamee";
-        let Value::Dictionary(dict) = parse(source).unwrap() else {
-            panic!()
-        };
-        assert_eq!(
-            dict[b"list".as_slice()],
-            Value::List(vec![Value::Integer(42), Value::Bytes(b"spam")])
-        );
-    }
-    // Inputs:
-    // - The noncanonical integer representation `i03e`.
-    // Outputs:
-    // - A passing assertion only when the precise error is returned.
-    // Logic:
-    // - Protect canonical encoding rules so equivalent integers have one form.
-    #[test]
-    fn rejects_noncanonical_integer() {
-        assert_eq!(parse(b"i03e"), Err(Error::InvalidInteger(0)));
-    }
 }

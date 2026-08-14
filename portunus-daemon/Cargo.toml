@@ -7,10 +7,13 @@ repository.workspace = true
 
 [dependencies]
 async-stream.workspace = true
-portunus-engine = { path = "../crates/portunus-engine" }
-portunus-proto = { path = "../crates/portunus-proto" }
+portunus-engine = { version = "0.1.0", path = "../crates/portunus-engine" }
+portunus-proto = { version = "0.1.0", path = "../crates/portunus-proto" }
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

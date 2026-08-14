@@ -13,8 +13,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["raza-dev-org"]
-repository = "https://github.com/raza-dev-org/portunus"
+authors = ["Muhammad Mukarram Raza"]
+repository = "https://github.com/BSSE23029/portunus"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
 
@@ -32,3 +32,17 @@ tonic = "0.12"
 tonic-build = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+future_incompatible = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused_lifetimes = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+todo = "deny"
+unimplemented = "deny"

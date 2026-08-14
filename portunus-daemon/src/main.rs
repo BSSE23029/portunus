@@ -12,7 +12,8 @@
 use portunus_engine::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
-    *,
+    ConfigResponse, ConfigUpdate, Empty, MetricsResponse, StopTransferRequest, TransferRequest,
+    TransferResponse,
 };
 use std::{net::SocketAddr, path::PathBuf, pin::Pin};
 use tokio_stream::Stream;
@@ -101,16 +102,16 @@ impl PortunusControl for Control {
         self.engine
             .update_config(|c| {
                 if let Some(v) = update.download_limit_bytes_per_second {
-                    c.download_limit = v
+                    c.download_limit = v;
                 }
                 if let Some(v) = update.upload_limit_bytes_per_second {
-                    c.upload_limit = v
+                    c.upload_limit = v;
                 }
                 if let Some(v) = update.max_peers {
-                    c.max_peers = v
+                    c.max_peers = v;
                 }
                 if let Some(v) = update.command_buffer {
-                    c.command_buffer = v
+                    c.command_buffer = v;
                 }
             })
             .await;

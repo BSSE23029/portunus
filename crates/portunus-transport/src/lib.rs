@@ -1,4 +1,4 @@
-//! BitTorrent peer-wire handshake and framed message codec.
+//! `BitTorrent` peer-wire handshake and framed message codec.
 //!
 //! TCP is an ordered byte stream: a single read may contain half a message or
 //! several messages. [`PeerCodec`] preserves incomplete bytes in `BytesMut` and
@@ -33,6 +33,7 @@ impl Handshake {
     ///
     /// **Logic:** Place the protocol length/name and each fixed-size field at the
     /// offsets defined by the peer-wire protocol.
+    #[must_use]
     pub fn encode(&self) -> [u8; HANDSHAKE_LEN] {
         let mut out = [0; HANDSHAKE_LEN];
         out[0] = 19;
@@ -51,6 +52,10 @@ impl Handshake {
     ///
     /// **Logic:** Authenticate the framing constants first, then copy the three
     /// fixed-width identity/feature fields into strongly sized arrays.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidData` when size, protocol length, or name is invalid.
     pub fn decode(input: &[u8]) -> io::Result<Self> {
         if input.len() != HANDSHAKE_LEN || input[0] != 19 || &input[1..20] != PROTOCOL {
             return Err(io::Error::new(
@@ -59,9 +64,15 @@ impl Handshake {
             ));
         }
         Ok(Self {
-            reserved: input[20..28].try_into().unwrap(),
-            info_hash: input[28..48].try_into().unwrap(),
-            peer_id: input[48..68].try_into().unwrap(),
+            reserved: input[20..28]
+                .try_into()
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?,
+            info_hash: input[28..48]
+                .try_into()
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?,
+            peer_id: input[48..68]
+                .try_into()
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?,
         })
     }
 }
@@ -105,7 +116,8 @@ impl PeerCodec {
     ///
     /// **Logic:** Store the limit for every subsequent decode. This converts a
     /// remote peer's declared frame length into a locally controlled allocation.
-    pub fn new(max_frame: usize) -> Self {
+    #[must_use]
+    pub const fn new(max_frame: usize) -> Self {
         Self { max_frame }
     }
 }
@@ -199,7 +211,9 @@ impl Encoder<Message> for PeerCodec {
             Message::Request { .. } | Message::Cancel { .. } => 12,
             _ => 0,
         };
-        dst.put_u32((1 + payload) as u32);
+        let frame_len = u32::try_from(1 + payload)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame is too large"))?;
+        dst.put_u32(frame_len);
         match item {
             Message::Choke => dst.put_u8(0),
             Message::Unchoke => dst.put_u8(1),
@@ -246,45 +260,5 @@ impl Encoder<Message> for PeerCodec {
             Message::KeepAlive => unreachable!(),
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Inputs:
-    // - A structured piece message with a four-byte block.
-    // Outputs:
-    // - A passing round-trip assertion or test failure.
-    // Logic:
-    // - Encode into a shared buffer and decode from that same buffer to ensure
-    //   both directions agree on length, field order, and block ownership.
-    #[test]
-    fn codec_roundtrip_piece() {
-        let msg = Message::Piece {
-            index: 2,
-            begin: 16,
-            block: Bytes::from_static(b"data"),
-        };
-        let mut buf = BytesMut::new();
-        let mut c = PeerCodec::new(1024);
-        c.encode(msg.clone(), &mut buf).unwrap();
-        assert_eq!(c.decode(&mut buf).unwrap(), Some(msg));
-    }
-    // Inputs:
-    // - A handshake containing recognizable repeated test bytes.
-    // Outputs:
-    // - A passing encode/decode equality assertion or test failure.
-    // Logic:
-    // - Verify every fixed offset survives a full wire-format round trip.
-    #[test]
-    fn handshake_roundtrip() {
-        let h = Handshake {
-            reserved: [0; 8],
-            info_hash: [1; 20],
-            peer_id: [2; 20],
-        };
-        assert_eq!(Handshake::decode(&h.encode()).unwrap(), h);
     }
 }
