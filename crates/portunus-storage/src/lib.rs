@@ -16,6 +16,7 @@ use tokio::{
     sync::Mutex,
 };
 
+pub mod assembly;
 pub mod integrity;
 
 #[derive(Debug, Error)]
