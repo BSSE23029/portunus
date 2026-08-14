@@ -23,8 +23,10 @@
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+mod encode;
 mod limits;
 
+pub use encode::encode;
 pub use limits::{LimitKind, Limits};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
