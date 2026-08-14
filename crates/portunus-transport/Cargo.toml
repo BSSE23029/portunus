@@ -1,0 +1,12 @@
+[package]
+name = "portunus-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+

@@ -1,0 +1,47 @@
+syntax = "proto3";
+package portunus;
+
+service PortunusControl {
+  rpc AddTransfer(TransferRequest) returns (TransferResponse);
+  rpc StopTransfer(StopTransferRequest) returns (TransferResponse);
+  rpc StreamMetrics(Empty) returns (stream MetricsResponse);
+  rpc UpdateConfig(ConfigUpdate) returns (ConfigResponse);
+}
+
+message Empty {}
+
+message TransferRequest {
+  string source = 1;
+  string destination = 2;
+}
+
+message StopTransferRequest { string transfer_id = 1; }
+
+message TransferResponse {
+  string transfer_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+message MetricsResponse {
+  float download_speed = 1;
+  float upload_speed = 2;
+  uint32 connected_peers = 3;
+  float progress = 4;
+  uint32 active_transfers = 5;
+}
+
+message ConfigUpdate {
+  optional uint64 download_limit_bytes_per_second = 1;
+  optional uint64 upload_limit_bytes_per_second = 2;
+  optional uint32 max_peers = 3;
+  optional uint32 command_buffer = 4;
+}
+
+message ConfigResponse {
+  uint64 download_limit_bytes_per_second = 1;
+  uint64 upload_limit_bytes_per_second = 2;
+  uint32 max_peers = 3;
+  uint32 command_buffer = 4;
+}
+

@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/portunus-proto",
+    "crates/portunus-bencode",
+    "crates/portunus-discovery",
+    "crates/portunus-transport",
+    "crates/portunus-storage",
+    "crates/portunus-engine",
+    "portunus-daemon",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["raza-dev-org"]
+repository = "https://github.com/raza-dev-org/portunus"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+async-stream = "0.3"
+bytes = "1.6"
+prost = "0.13"
+rand = "0.8"
+sha1 = "0.10"
+thiserror = "2"
+tokio = { version = "1.38", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tonic = "0.12"
+tonic-build = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

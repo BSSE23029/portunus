@@ -1,0 +1,16 @@
+[package]
+name = "portunus-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-stream.workspace = true
+portunus-engine = { path = "../crates/portunus-engine" }
+portunus-proto = { path = "../crates/portunus-proto" }
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
