@@ -10,7 +10,7 @@
 //! ```
 
 use portunus_daemon::logging::{init_global_logging, LoggingConfig};
-use portunus_engine::{Config, Engine};
+use portunus_engine::torrent::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
     ConfigResponse, ConfigUpdate, Empty, MetricsResponse, StopTransferRequest, TransferRequest,

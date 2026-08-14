@@ -1,4 +1,6 @@
-use portunus_engine::{rarest_first, Config, Engine, Error};
+//! Integration coverage for the isolated `BitTorrent` compatibility adapter.
+
+use portunus_engine::torrent::{rarest_first, Config, Engine, Error};
 use std::collections::HashSet;
 
 // Inputs: availability with completed and inflight exclusions.
