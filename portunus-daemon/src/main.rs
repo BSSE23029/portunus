@@ -9,6 +9,7 @@
 //!                <──server stream───── Control <──watch────── Engine
 //! ```
 
+use portunus_daemon::logging::{init_global_logging, LoggingConfig};
 use portunus_engine::{Config, Engine};
 use portunus_proto::{
     portunus_control_server::{PortunusControl, PortunusControlServer},
@@ -127,23 +128,23 @@ impl PortunusControl for Control {
 
 #[tokio::main]
 // Inputs:
-// - `PORTUNUS_ADDR` and `RUST_LOG` environment variables; both are optional.
+// - `PORTUNUS_ADDR`, `PORTUNUS_LOG`, and `RUST_LOG` environment variables; all
+//   are optional.
 // Outputs:
 // - A running gRPC server until Ctrl-C, or a boxed startup/runtime error.
 // Logic:
 // - Initialize structured logging, parse the listen address, start the bounded
 //   engine, register its gRPC adapter, and drain gracefully on the OS signal.
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    let logging = LoggingConfig::from_env()?;
+    init_global_logging(&logging)?;
     let addr: SocketAddr = std::env::var("PORTUNUS_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:50051".into())
         .parse()?;
     let service = Control {
         engine: Engine::start(Config::default()),
     };
-    tracing::info!(%addr,"Portunus control plane listening");
+    tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
     Server::builder()
         .add_service(PortunusControlServer::new(service))
         .serve_with_shutdown(addr, async {

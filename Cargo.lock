@@ -593,6 +593,7 @@ dependencies = [
  "async-stream",
  "portunus-engine",
  "portunus-proto",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tonic",

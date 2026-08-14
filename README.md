@@ -20,9 +20,12 @@ Start with the illustrated [Systems Engineering Guide](docs/THEORY.md) for the t
 
 ```sh
 cargo test --workspace
-RUST_LOG=info cargo run -p portunus-daemon
+PORTUNUS_LOG=info cargo run -p portunus-daemon
 ```
 
 The daemon listens on `127.0.0.1:50051` by default. Override it with `PORTUNUS_ADDR`.
+Logging defaults to `info`. Set `PORTUNUS_LOG=debug` for global diagnostics or
+use targeted filters such as `PORTUNUS_LOG=portunus_engine=trace,tonic=warn`.
+`RUST_LOG` remains a lower-precedence ecosystem-compatible fallback.
 
 Portunus is protocol infrastructure. Only distribute content you have the right to share, and expose user controls for bandwidth, metered networks, and seeding.
