@@ -7,6 +7,7 @@
 //! This module does not log, retry, expose source values, choose authentication
 //! policy, or translate failures owned by unrelated protocol/storage crates.
 
+use crate::fault::InjectedFault;
 use bytes::Bytes;
 use portunus_engine::torrent::Error;
 use portunus_proto::ErrorDetail;
@@ -49,4 +50,23 @@ pub fn engine_status(error: Error) -> Status {
         resource: resource.into(),
     };
     Status::with_details(code, message, Bytes::from(detail.encode_to_vec()))
+}
+
+/// Inputs: deterministic injected daemon operation failure.
+///
+/// Outputs: retryable unavailable status with payload-free structured detail.
+/// Logic: expose one stable classification while retaining the fault point only in
+/// the human diagnostic message and structured tracing emitted by the injector.
+#[must_use]
+pub fn fault_status(fault: InjectedFault) -> Status {
+    let detail = ErrorDetail {
+        reason: "INJECTED_FAULT".into(),
+        retryable: true,
+        resource: "control.operation".into(),
+    };
+    Status::with_details(
+        Code::Unavailable,
+        fault.to_string(),
+        Bytes::from(detail.encode_to_vec()),
+    )
 }

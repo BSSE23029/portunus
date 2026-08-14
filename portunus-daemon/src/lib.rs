@@ -3,5 +3,6 @@
 pub mod admission;
 pub mod auth;
 pub mod errors;
+pub mod fault;
 pub mod logging;
 pub mod operations;

@@ -12,7 +12,8 @@
 use portunus_daemon::{
     admission::{AdmissionConfig, ControlInterceptor},
     auth::AuthConfig,
-    errors::engine_status,
+    errors::{engine_status, fault_status},
+    fault::{DisabledFaults, FaultInjector, FaultPoint},
     logging::{init_global_logging, LoggingConfig},
     operations::{mark_draining, mark_serving},
 };
@@ -22,13 +23,14 @@ use portunus_proto::{
     ConfigResponse, ConfigUpdate, Empty, MetricsResponse, StopTransferRequest, TransferRequest,
     TransferResponse, FILE_DESCRIPTOR_SET,
 };
-use std::{net::SocketAddr, path::PathBuf, pin::Pin};
+use std::{net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc};
 use tokio_stream::Stream;
 use tonic::{transport::Server, Request, Response, Status};
 
 #[derive(Clone)]
 struct Control {
     engine: Engine,
+    faults: Arc<dyn FaultInjector>,
 }
 #[tonic::async_trait]
 impl PortunusControl for Control {
@@ -43,6 +45,9 @@ impl PortunusControl for Control {
         &self,
         request: Request<TransferRequest>,
     ) -> Result<Response<TransferResponse>, Status> {
+        self.faults
+            .check(FaultPoint::AddTransfer)
+            .map_err(fault_status)?;
         let r = request.into_inner();
         let id = self
             .engine
@@ -66,6 +71,9 @@ impl PortunusControl for Control {
         &self,
         request: Request<StopTransferRequest>,
     ) -> Result<Response<TransferResponse>, Status> {
+        self.faults
+            .check(FaultPoint::StopTransfer)
+            .map_err(fault_status)?;
         let id = request.into_inner().transfer_id;
         self.engine
             .stop_transfer(id.clone())
@@ -90,6 +98,9 @@ impl PortunusControl for Control {
         &self,
         _: Request<Empty>,
     ) -> Result<Response<Self::StreamMetricsStream>, Status> {
+        self.faults
+            .check(FaultPoint::StreamMetrics)
+            .map_err(fault_status)?;
         let mut rx = self.engine.subscribe_metrics();
         let output = async_stream::try_stream! {loop{let m=rx.borrow_and_update().clone();yield MetricsResponse{download_speed:m.download_speed,upload_speed:m.upload_speed,connected_peers:m.connected_peers,progress:m.progress,active_transfers:m.active_transfers};if rx.changed().await.is_err(){break;}}};
         Ok(Response::new(Box::pin(output)))
@@ -105,6 +116,9 @@ impl PortunusControl for Control {
         &self,
         request: Request<ConfigUpdate>,
     ) -> Result<Response<ConfigResponse>, Status> {
+        self.faults
+            .check(FaultPoint::UpdateConfig)
+            .map_err(fault_status)?;
         let update = request.into_inner();
         self.engine
             .update_config(|c| {
@@ -151,6 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth = AuthConfig::from_source(bearer.as_deref())?;
     let service = Control {
         engine: Engine::start(Config::default()),
+        faults: Arc::new(DisabledFaults),
     };
     tracing::info!(%addr, log_filter = logging.filter(), "Portunus control plane listening");
     let in_flight = std::env::var("PORTUNUS_MAX_IN_FLIGHT").ok();

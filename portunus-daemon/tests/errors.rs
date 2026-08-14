@@ -1,6 +1,9 @@
 //! Integration coverage for stable structured control-plane error details.
 
-use portunus_daemon::errors::engine_status;
+use portunus_daemon::{
+    errors::{engine_status, fault_status},
+    fault::{FaultInjector, FaultPoint, FaultScript},
+};
 use portunus_engine::torrent::Error;
 use portunus_proto::ErrorDetail;
 use prost::Message;
@@ -42,4 +45,19 @@ fn maps_engine_failures_to_structured_statuses() {
         assert_eq!(detail.retryable, retryable);
         assert_eq!(detail.resource, resource);
     }
+}
+
+// Inputs: deterministic injected control-operation failure.
+// Outputs: retryable unavailable status with payload-free stable detail.
+// Logic: keep test-only failure injection indistinguishable from safe service outage.
+#[test]
+fn maps_injected_faults_without_request_data() {
+    let faults = FaultScript::new(1).unwrap();
+    faults.arm(FaultPoint::UpdateConfig, 1).unwrap();
+    let status = fault_status(faults.check(FaultPoint::UpdateConfig).unwrap_err());
+    assert_eq!(status.code(), Code::Unavailable);
+    let detail = ErrorDetail::decode(status.details()).unwrap();
+    assert_eq!(detail.reason, "INJECTED_FAULT");
+    assert!(detail.retryable);
+    assert_eq!(detail.resource, "control.operation");
 }
