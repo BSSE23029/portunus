@@ -20,6 +20,8 @@ use std::{
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
+pub mod budget;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub download_limit: u64,
